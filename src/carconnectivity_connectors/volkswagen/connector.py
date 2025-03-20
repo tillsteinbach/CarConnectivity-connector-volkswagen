@@ -279,6 +279,9 @@ class Connector(BaseConnector):
                 capability_parking_position: Optional[Capability] = vehicle_to_update.capabilities.get_capability('parkingPosition')
                 if capability_parking_position is not None and capability_parking_position.enabled and len(capability_parking_position.status.value) == 0:
                     self.fetch_parking_position(vehicle_to_update)
+                capability_trip_statistics: Optional[Capability] = vehicle_to_update.capabilities.get_capability('tripStatistics')
+                if capability_trip_statistics is not None and capability_trip_statistics.enabled and len(capability_trip_statistics.status.value) == 0:
+                    self.fetch_trips(vehicle_to_update)
                 self.decide_state(vehicle_to_update)
 
     def fetch_vehicles(self) -> None:
@@ -1418,6 +1421,23 @@ class Connector(BaseConnector):
             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
             vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
             vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+
+    def fetch_trips(self, vehicle: VolkswagenVehicle) -> None:
+        vin = vehicle.vin.value
+        if vin is None:
+            raise ValueError('vehicle.vin cannot be None')
+        # {'data': {'id': '3321740037', 'tripEndTimestamp': '2025-03-12T07:50:23Z', 'tripType': 'longTerm', 'vehicleType': 'hybrid', 'mileage_km': 1955, 'startMileage_km': 47333, 'overallMileage_km': 49289, 'travelTime': 3327, 'averageFuelConsumption': 4, 'averageElectricConsumption': 11.8, 'averageSpeed_kmph': 35, 'totalElectricConsumption_kwh': 230.69, 'totalFuelConsumption_L': 78.2}}
+
+        from enum import Enum
+        class TripType(Enum):
+            SHORTTERM = 'shortTerm'
+            LONGTERM = 'longTerm'
+            CYCLIC = 'cyclic'
+            UNKNOWN = 'unkown trip type'
+        for tripType in [tripType for tripType in TripType if tripType != TripType.UNKNOWN]:
+            url = f'https://emea.bff.cariad.digital/vehicle/v1/trips/{vin}/{tripType.value.lower()}/last'
+            data = self._fetch_data(url, self.session)
+            print(data)
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
