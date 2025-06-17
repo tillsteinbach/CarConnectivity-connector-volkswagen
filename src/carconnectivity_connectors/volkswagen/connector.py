@@ -1916,10 +1916,8 @@ class Connector(BaseConnector):
                     raise SetterError('Maximum current must be greater than 6 amps')
                 if settings.maximum_current.value < 16:
                     setting_dict['maxChargeCurrentAC'] = 'reduced'
-                    settings.maximum_current.value = 6.0
                 else:
                     setting_dict['maxChargeCurrentAC'] = 'maximum'
-                    settings.maximum_current.value = 16.0
         if isinstance(attribute, BooleanAttribute) and attribute.id == 'auto_unlock':
             setting_dict['autoUnlockPlugWhenChargedAC'] = 'on' if value else 'off'
         elif settings.auto_unlock.enabled and settings.auto_unlock.value is not None:
