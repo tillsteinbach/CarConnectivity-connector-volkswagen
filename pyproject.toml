@@ -15,7 +15,7 @@ authors = [
 ]
 dependencies = [
     "carconnectivity>=0.7",
-    "oauthlib~=3.2.2",
+    "oauthlib>=3.2.2,<3.4.0",
     "requests~=2.32.3",
     "pyjwt~=2.10"
 ]
