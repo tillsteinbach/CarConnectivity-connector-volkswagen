@@ -630,6 +630,25 @@ class Connector(BaseConnector):
                 vehicle.drives.enabled = False
 
             if 'measurements' in data and data['measurements'] is not None:
+                measurements = data['measurements']
+                # --- Battery SOC -------------------------------------------------
+                if 'fuelLevelStatus' in measurements and measurements['fuelLevelStatus'] is not None:
+                    fuel = measurements['fuelLevelStatus']['value']
+                    if 'currentSOC_pct' in fuel:
+                        # first electric drive (ID is 'primary' in 99 % of cars)
+                        e_drives = [d for d in vehicle.drives.drives.values()
+                                    if isinstance(d, ElectricDrive)]
+                        if e_drives:
+                            e_drives[0].level._set_value(float(fuel['currentSOC_pct']))
+
+                # --- Total range -------------------------------------------------
+                if 'rangeStatus' in measurements and measurements['rangeStatus'] is not None:
+                    rng = measurements['rangeStatus']['value']
+                    if 'totalRange_km' in rng:
+                        e_drives = [d for d in vehicle.drives.drives.values()
+                                    if isinstance(d, ElectricDrive)]
+                        if e_drives:
+                            e_drives[0].range._set_value(float(rng['totalRange_km']))
                 if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
                     if 'value' in data['measurements']['fuelLevelStatus'] and data['measurements']['fuelLevelStatus']['value'] is not None:
                         fuel_level_status = data['measurements']['fuelLevelStatus']['value']
