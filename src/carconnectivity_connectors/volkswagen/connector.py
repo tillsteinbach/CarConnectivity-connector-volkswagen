@@ -630,29 +630,24 @@ class Connector(BaseConnector):
                 vehicle.drives.enabled = False
 
             if 'measurements' in data and data['measurements'] is not None:
-                measurements = data['measurements']
-                # --- Battery SOC -------------------------------------------------
-                if 'fuelLevelStatus' in measurements and measurements['fuelLevelStatus'] is not None:
-                    fuel = measurements['fuelLevelStatus']['value']
-                    if 'currentSOC_pct' in fuel:
-                        # first electric drive (ID is 'primary' in 99 % of cars)
-                        e_drives = [d for d in vehicle.drives.drives.values()
-                                    if isinstance(d, ElectricDrive)]
-                        if e_drives:
-                            e_drives[0].level._set_value(float(fuel['currentSOC_pct']))
-
-                # --- Total range -------------------------------------------------
-                if 'rangeStatus' in measurements and measurements['rangeStatus'] is not None:
-                    rng = measurements['rangeStatus']['value']
-                    if 'totalRange_km' in rng:
-                        e_drives = [d for d in vehicle.drives.drives.values()
-                                    if isinstance(d, ElectricDrive)]
-                        if e_drives:
-                            e_drives[0].range._set_value(float(rng['totalRange_km']))
                 if 'fuelLevelStatus' in data['measurements'] and data['measurements']['fuelLevelStatus'] is not None:
                     if 'value' in data['measurements']['fuelLevelStatus'] and data['measurements']['fuelLevelStatus']['value'] is not None:
                         fuel_level_status = data['measurements']['fuelLevelStatus']['value']
                         captured_at: datetime = robust_time_parse(fuel_level_status['carCapturedTimestamp'])
+
+                        # Handle currentSOC_pct from fuelLevelStatus
+                        if 'currentSOC_pct' in fuel_level_status and fuel_level_status['currentSOC_pct'] is not None:
+                            if isinstance(vehicle, VolkswagenElectricVehicle):
+                                electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
+                                if electric_drive is None:
+                                    # Create primary electric drive if it doesn't exist
+                                    electric_drive = ElectricDrive(drive_id='primary', drives=vehicle.drives)
+                                    electric_drive.type._set_value(GenericDrive.Type.ELECTRIC)  # pylint: disable=protected-access
+                                    vehicle.drives.add_drive(electric_drive)
+                                # pylint: disable-next=protected-access
+                                electric_drive.level._set_value(value=fuel_level_status['currentSOC_pct'], measured=captured_at)
+                                electric_drive.level.precision = 1
+
                         # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
                         if 'carType' in fuel_level_status and fuel_level_status['carType'] is not None:
                             try:
@@ -686,7 +681,34 @@ class Connector(BaseConnector):
                                 vehicle.type._set_value(car_type)  # pylint: disable=protected-access
                             except ValueError:
                                 LOG_API.warning('Unknown car type %s', fuel_level_status['carType'])
-                        log_extra_keys(LOG_API, 'fuelLevelStatus', fuel_level_status, {'carCapturedTimestamp', 'carType'})
+                        log_extra_keys(LOG_API, 'fuelLevelStatus', fuel_level_status, {'carCapturedTimestamp', 'carType', 'currentSOC_pct', 'primaryEngineType'})
+
+                # Handle rangeStatus from measurements section
+                if 'rangeStatus' in data['measurements'] and data['measurements']['rangeStatus'] is not None:
+                    if 'value' in data['measurements']['rangeStatus'] and data['measurements']['rangeStatus']['value'] is not None:
+                        range_status = data['measurements']['rangeStatus']['value']
+                        captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
+
+                        # Handle totalRange_km
+                        if 'totalRange_km' in range_status and range_status['totalRange_km'] is not None:
+                            # pylint: disable-next=protected-access
+                            vehicle.drives.total_range._set_value(value=range_status['totalRange_km'], measured=captured_at, unit=Length.KM)
+                            vehicle.drives.total_range.precision = 1
+
+                        # Handle electricRange for electric vehicles
+                        if 'electricRange' in range_status and range_status['electricRange'] is not None:
+                            if isinstance(vehicle, VolkswagenElectricVehicle):
+                                electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
+                                if electric_drive is None:
+                                    # Create primary electric drive if it doesn't exist
+                                    electric_drive = ElectricDrive(drive_id='primary', drives=vehicle.drives)
+                                    electric_drive.type._set_value(GenericDrive.Type.ELECTRIC)  # pylint: disable=protected-access
+                                    vehicle.drives.add_drive(electric_drive)
+                                # pylint: disable-next=protected-access
+                                electric_drive.range._set_value(value=range_status['electricRange'], measured=captured_at, unit=Length.KM)
+                                electric_drive.range.precision = 1
+
+                        log_extra_keys(LOG_API, 'rangeStatus', range_status, {'carCapturedTimestamp', 'totalRange_km', 'electricRange'})
                 if 'odometerStatus' in data['measurements'] and data['measurements']['odometerStatus'] is not None:
                     if 'value' in data['measurements']['odometerStatus'] and data['measurements']['odometerStatus']['value'] is not None:
                         odometer_status = data['measurements']['odometerStatus']['value']
@@ -1226,8 +1248,8 @@ class Connector(BaseConnector):
                                                              measured=captured_at, unit=Speed.KMH)
                         else:
                             vehicle.charging.rate._set_value(None, measured=captured_at)  # pylint: disable=protected-access
-                        if 'remainingTimeToComplete_min' in charging_status and charging_status['remainingTimeToComplete_min'] is not None:
-                            remaining_duration: timedelta = timedelta(minutes=charging_status['remainingTimeToComplete_min'])
+                        if 'remainingChargingTimeToComplete_min' in charging_status and charging_status['remainingChargingTimeToComplete_min'] is not None:
+                            remaining_duration: timedelta = timedelta(minutes=charging_status['remainingChargingTimeToComplete_min'])
                             estimated_date_reached: datetime = captured_at + remaining_duration
                             estimated_date_reached = estimated_date_reached.replace(second=0, microsecond=0)
                             vehicle.charging.estimated_date_reached._set_value(value=estimated_date_reached,  # pylint: disable=protected-access
@@ -1236,7 +1258,7 @@ class Connector(BaseConnector):
                             vehicle.charging.estimated_date_reached._set_value(None, measured=captured_at)  # pylint: disable=protected-access
                         log_extra_keys(LOG_API, 'chargingStatus', charging_status, {'chargingStatus', 'carCapturedTimestamp',
                                                                                     'chargingState', 'chargePower_kW',
-                                                                                    'chargeRate_kmph', 'remainingTimeToComplete_min'})
+                                                                                    'chargeRate_kmph', 'remainingChargingTimeToComplete_min'})
                 if 'chargingSettings' in data['charging'] and data['charging']['chargingSettings'] is not None:
                     if 'value' in data['charging']['chargingSettings'] and data['charging']['chargingSettings']['value'] is not None:
                         charging_settings = data['charging']['chargingSettings']['value']
