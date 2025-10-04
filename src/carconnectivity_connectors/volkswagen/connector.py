@@ -279,7 +279,6 @@ class Connector(BaseConnector):
                 if capability_parking_position is not None and capability_parking_position.enabled and len(capability_parking_position.status.value) == 0:
                     self.fetch_parking_position(vehicle_to_update)
                 self.decide_state(vehicle_to_update)
-        self.car_connectivity.transaction_end()
 
     def fetch_vehicles(self) -> None:
         """
