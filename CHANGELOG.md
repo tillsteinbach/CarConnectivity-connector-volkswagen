@@ -5,9 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
-## [0.9] - 2025-07-27
+## [0.9] - 2025-10-04
 ### Added
 - Support for ranges and levels of engines for vehicles that do not have the 'fuelStatus' capability, but provides the data through 'measurements' capability
+### Fixed
+- Problem where connector did not call transaction_end() after updating vehicles, causing problems with other plugins (thanks to @michaelarnauts for finding this issue)
 
 ## [0.8.2] - 2025-07-22
 ### Fixed
