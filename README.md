@@ -79,4 +79,4 @@ password testpassword123
 account 1234
 ```
 ### Limitations
-The connector is not working with US based vehicles.
+The connector is not working with US based vehicles. If you are looking for a connector for your Volkswagen in North America, use this connector instead: [CarConnectivity-connector-volkswagen-na](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na)
