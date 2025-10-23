@@ -123,7 +123,7 @@ class Capability(GenericObject):
         UNKNOWN = 0
         DEACTIVATED = 1001
         INITIALLY_DISABLED = 1003
-        DISABLED_BY_USER = 1004
+        DISABLED_BY_USER_DEPRECIATED = 1004
         OFFLINE_MODE = 1005
         WORKSHOP_MODE = 1006
         MISSING_OPERATION = 1007
