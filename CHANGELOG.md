@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.9.1] - 2025-11-02
+### Changed
+- Updated some dependencies
+
 ## [0.9] - 2025-10-04
 ### Added
 - Support for ranges and levels of engines for vehicles that do not have the 'fuelStatus' capability, but provides the data through 'measurements' capability
@@ -105,7 +109,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.9...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.1
 [0.9]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9
 [0.8.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.8.2
 [0.8.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.8.1
