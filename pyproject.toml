@@ -20,12 +20,12 @@ dependencies = [
     "pyjwt~=2.10"
 ]
 readme = "README.md"
+license = "MIT"
 license-files = [
     "LICENSE",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
