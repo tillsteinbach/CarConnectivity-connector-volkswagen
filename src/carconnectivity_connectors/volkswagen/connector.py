@@ -515,6 +515,11 @@ class Connector(BaseConnector):
             LOG.warning('No capabilities enabled for vehicle %s', vin)
             return
 
+        if 'access' not in jobs and 'access' in known_capabilities:
+            LOG_API.debug('Adding "access" capability to API request despite not being in vehicle capabilities (VW API)')
+            jobs.append('access')
+            LOG_API.debug('Updated jobs list: %s', jobs)
+
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
         data: Dict[str, Any] | None = self._fetch_data(url, self.session)
         if data is not None:
