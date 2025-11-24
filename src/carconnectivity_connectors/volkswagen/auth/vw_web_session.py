@@ -238,7 +238,6 @@ class VWWebSession(OpenIDSession):
             AuthenticationError: If authentication fails.
             APICompatibilityError: If there are issues with the authentication flow.
         """
-        from bs4 import BeautifulSoup
         import re
         
         # Get the authorization page (follow redirects to get to the actual login page)
@@ -246,10 +245,9 @@ class VWWebSession(OpenIDSession):
         if response.status_code != requests.codes['ok']:
             raise APICompatibilityError(f'Failed to fetch authorization page, status code: {response.status_code}')
         
-        # Parse the page to extract state token
-        soup = BeautifulSoup(response.text, 'html.parser')
-        state_input = soup.select_one('input[name="state"]')
-        state = state_input['value'] if state_input else None
+        # Extract state token using regex
+        state_match = re.search(r'<input[^>]*name="state"[^>]*value="([^"]*)"', response.text)
+        state = state_match.group(1) if state_match else None
         
         if not state:
             raise APICompatibilityError('Could not find state token in authorization page')
