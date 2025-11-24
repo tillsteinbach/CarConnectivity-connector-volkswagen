@@ -150,12 +150,17 @@ class OpenIDSession(requests.Session):
                     new_token['expires_in'] = self._token['expires_in']
                 else:
                     if 'id_token' in new_token:
-                        meta_data = jwt.decode(new_token['id_token'], options={"verify_signature": False})
-                        if 'exp' in meta_data:
-                            new_token['expires_at'] = meta_data['exp']
-                            expires_at = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
-                            new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
-                        else:
+                        try:
+                            meta_data = jwt.decode(new_token['id_token'], options={"verify_signature": False})
+                            if 'exp' in meta_data:
+                                new_token['expires_at'] = meta_data['exp']
+                                expires_at = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
+                                new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
+                            else:
+                                new_token['expires_in'] = 3600
+                        except jwt.exceptions.DecodeError:
+                            # Invalid JWT token, use default expiration
+                            LOG.debug("Invalid JWT token provided, using default expiration")
                             new_token['expires_in'] = 3600
                     else:
                         new_token['expires_in'] = 3600
@@ -369,7 +374,20 @@ class OpenIDSession(requests.Session):
                 self.access_token = None
                 try:
                     self.refresh()
-                except AuthenticationError:
+                except AuthenticationError as auth_error:
+                    # Check if this is a "Server requests new authorization" error
+                    if 'Server requests new authorization' in str(auth_error):
+                        LOG.warning('Server requests new authorization - clearing tokens and forcing re-login')
+                        # Clear all tokens to force fresh login
+                        if hasattr(self, 'clear_tokens'):
+                            self.clear_tokens()
+                        else:
+                            # Fallback for base class
+                            self.token = None
+                            self.access_token = None
+                            self.refresh_token = None
+                            self.id_token = None
+                    LOG.info('Authentication failed during refresh - attempting new login')
                     self.login()
                 except TokenExpiredError:
                     self.login()
