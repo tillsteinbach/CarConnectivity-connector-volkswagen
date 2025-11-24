@@ -156,7 +156,13 @@ class Connector(BaseConnector):
         self.session: WeConnectSession = session
         self.session.retries = 3
         self.session.timeout = 180
-        self.session.refresh()
+        # Check if tokens exist before attempting to refresh
+        if self.session.token is not None and self.session.refresh_token is not None:
+            LOG.debug("Existing tokens found, refreshing session")
+            self.session.refresh()
+        else:
+            LOG.debug("No existing tokens found, performing initial login")
+            self.session.login()
 
         self._elapsed: List[timedelta] = []
 
