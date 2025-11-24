@@ -84,7 +84,7 @@ class WeConnectSession(VWWebSession):
         # perform web authentication
         response = self.do_web_auth(authorization_url_str)
         # fetch tokens from web authentication response
-        self.fetch_tokens('https://emea.bff.cariad.digital/user-login/login/v1',
+        self.fetch_tokens('https://emea.bff.cariad.digital/login/v1/idk/token',
                           authorization_response=response)
 
     def refresh(self) -> None:
@@ -142,6 +142,7 @@ class WeConnectSession(VWWebSession):
 
         if self.token is not None and all(key in self.token for key in ('state', 'id_token', 'access_token', 'code')):
             # Generate json body for token request
+
             body: str = json.dumps(
                 {
                     'state': self.token['state'],
@@ -159,6 +160,7 @@ class WeConnectSession(VWWebSession):
             token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
                                        access_type=AccessType.ID)  # pyright: ignore reportCallIssue
             if token_response.status_code != requests.codes['ok']:
+                print(token_response.text)
                 raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary WeConnect failure: {token_response.status_code}')
             # parse token from response body
             token = self.parse_from_body(token_response.text)

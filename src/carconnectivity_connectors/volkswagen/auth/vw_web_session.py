@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 
-from urllib.parse import parse_qsl, urlparse, urlsplit, urljoin
+from urllib.parse import ParseResult, ParseResultBytes, parse_qsl, urlparse, urlsplit, urljoin
 
 from urllib3.util.retry import Retry
 
@@ -82,22 +82,23 @@ class VWWebSession(OpenIDSession):
         email_form: HTMLFormParser = self._get_login_form(url)
 
         # Set email to the provided username
-        email_form.data['email'] = self.session_user.username
+        email_form.data['username'] = self.session_user.username
+        email_form.data['password'] = self.session_user.password
 
         # Get password form
-        password_form = self._get_password_form(
-            urljoin('https://identity.vwgroup.io', email_form.target),
-            email_form.data
-        )
+        #password_form = self._get_password_form(
+        #    urljoin('https://identity.vwgroup.io', email_form.target),
+        #    email_form.data
+        #)
 
         # Set credentials
-        password_form.data['email'] = self.session_user.username
-        password_form.data['password'] = self.session_user.password
+        #password_form.data['email'] = self.session_user.username
+        #password_form.data['password'] = self.session_user.password
 
         # Log in and get the redirect URL
         url = self._handle_login(
-            f'https://identity.vwgroup.io/signin-service/v1/{self.client_id}/{password_form.target}',
-            password_form.data
+            f'https://identity.vwgroup.io/u/login?state={email_form.data['state']}',
+            email_form.data
         )
 
         if self.redirect_uri is None:
@@ -106,9 +107,9 @@ class VWWebSession(OpenIDSession):
         while True:
             if url.startswith(self.redirect_uri):
                 break
-
-            url = urljoin('https://identity.vwgroup.io', url)
-
+            if not url.startswith('https://'):
+                url = urljoin('https://identity.vwgroup.io', url)
+            
             if 'terms-and-conditions' in url:
                 if self.accept_terms_on_login:
                     url = self._handle_consent_form(url)
@@ -140,16 +141,19 @@ class VWWebSession(OpenIDSession):
                     raise APICompatibilityError('Forwarding without Location in headers')
 
                 url = response.headers['Location']
+                if not url.startswith('https://'):
+                    parsed_request: ParseResult | ParseResultBytes = urlparse(response.request.url)
+                    url = parsed_request.scheme + '://' + parsed_request.hostname + url
                 continue
 
             raise APICompatibilityError(f'Retrieving login page was not successful, '
                                         f'status code: {response.status_code}')
 
         # Find login form on page to obtain inputs
-        email_form = HTMLFormParser(form_id='emailPasswordForm')
+        email_form = HTMLFormParser(form_id=None)
         email_form.feed(response.text)
 
-        if not email_form.target or not all(x in email_form.data for x in ['_csrf', 'relayState', 'hmac', 'email']):
+        if not all(x in email_form.data for x in ['state', 'username', 'password']):
             raise APICompatibilityError('Could not find all required input fields on login page')
 
         return email_form
@@ -193,26 +197,6 @@ class VWWebSession(OpenIDSession):
         if 'Location' not in response.headers:
             raise APICompatibilityError('Forwarding without Location in headers')
 
-        # Parse parameters from forwarding url
-        params: Dict[str, str] = dict(parse_qsl(urlsplit(response.headers['Location']).query))
-
-        # Check for login error
-        if 'error' in params and params['error']:
-            error_messages: Dict[str, str] = {
-                'login.errors.password_invalid': 'Password is invalid',
-                'login.error.throttled': 'Login throttled, probably too many wrong logins. You have to wait '
-                                         'a few minutes until a new login attempt is possible'
-            }
-
-            raise AuthenticationError(error_messages.get(params['error'], params['error']))
-
-        # Check for user ID
-        if 'userId' not in params or not params['userId']:
-            if 'updated' in params and params['updated'] == 'dataprivacy':
-                raise AuthenticationError('You have to login at myvolkswagen.de and accept the terms and conditions')
-            raise APICompatibilityError('No user ID provided')
-
-        self.user_id = params['userId']  # pylint: disable=unused-private-member
         return response.headers['Location']
 
     def _handle_consent_form(self, url: str) -> str:
