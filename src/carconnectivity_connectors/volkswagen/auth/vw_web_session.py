@@ -123,6 +123,14 @@ class VWWebSession(OpenIDSession):
                     raise AuthenticationError(f'It seems like you need to accept the terms and conditions. '
                                               f'Try to visit the URL "{url}" or log into smartphone app.')
 
+            # Check for custom scheme before making HTTP request
+            if url.startswith('weconnect://authenticated'):
+                break
+            
+            # Prevent HTTP requests on custom URL schemes
+            if url.startswith('weconnect://'):
+                return url
+
             response = self.websession.get(url, allow_redirects=False)
             if response.status_code == requests.codes['internal_server_error']:
                 raise RetrievalError('Temporary server error during login')
@@ -273,7 +281,10 @@ class VWWebSession(OpenIDSession):
         # Follow redirects to get the final URL with authorization code
         redirect_url = response.headers['Location']
         max_depth = 10
-        while not redirect_url.startswith('weconnect://authenticated'):
+        while max_depth > 0:
+            if redirect_url.startswith('weconnect://authenticated'):
+                break
+                
             if max_depth == 0:
                 raise APICompatibilityError('Too many redirects in new auth flow')
             
@@ -287,6 +298,11 @@ class VWWebSession(OpenIDSession):
                 raise APICompatibilityError('No Location header in redirect')
             
             redirect_url = response.headers['Location']
+            
+            # Check if the redirect URL is the custom scheme callback
+            if redirect_url.startswith('weconnect://authenticated'):
+                break
+                
             max_depth -= 1
         
         return redirect_url
