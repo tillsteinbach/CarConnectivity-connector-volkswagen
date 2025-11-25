@@ -145,6 +145,10 @@ class Connector(BaseConnector):
             self.active_config['max_age'] = config['max_age']
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
 
+        self.active_config['force_enable_access'] = False
+        if 'force_enable_access' in config:
+            self.active_config['force_enable_access'] = config['force_enable_access']
+
         if self.active_config['username'] is None or self.active_config['password'] is None:
             raise AuthenticationError('Username or password not provided')
 
@@ -520,6 +524,11 @@ class Connector(BaseConnector):
         if len(jobs) == 0:
             LOG.warning('No capabilities enabled for vehicle %s', vin)
             return
+
+        if 'access' not in jobs and 'access' in known_capabilities and self.active_config['force_enable_access']:
+            LOG_API.debug('Adding "access" capability to API request despite not being in vehicle capabilities (VW API)')
+            jobs.append('access')
+            LOG_API.debug('Updated jobs list: %s', jobs)
 
         url = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/selectivestatus?jobs=' + ','.join(jobs)
         data: Dict[str, Any] | None = self._fetch_data(url, self.session)
