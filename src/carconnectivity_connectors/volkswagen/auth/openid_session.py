@@ -210,6 +210,18 @@ class OpenIDSession(requests.Session):
             return self._token.get('refresh_token')
         return None
 
+    @refresh_token.setter
+    def refresh_token(self, new_refresh_token):
+        """
+        Sets a new refresh token.
+
+        Args:
+            new_refresh_token (str): The new refresh token to be set.
+        """
+        if self._token is None:
+            self._token = {}
+        self._token['refresh_token'] = new_refresh_token
+
     @property
     def id_token(self):
         """
@@ -299,11 +311,22 @@ class OpenIDSession(requests.Session):
     def _invalidate_tokens(self):
         """
         Invalidates all tokens by clearing them from the session.
+        Handles token cleanup using proper setters.
         """
-        self.token = None
-        self.access_token = None
-        self.refresh_token = None
-        self.id_token = None
+        # Clear token dict first to avoid partial state
+        old_token = self._token
+        self._token = None
+        
+        # Use setters to ensure proper cleanup
+        if old_token:
+            if 'access_token' in old_token:
+                self.access_token = None
+            if 'refresh_token' in old_token:
+                self.refresh_token = None
+            if 'id_token' in old_token:
+                self._token = {}  # Temporary dict for id_token setter
+                self.id_token = None
+                self._token = None
 
     def login(self):
         """
