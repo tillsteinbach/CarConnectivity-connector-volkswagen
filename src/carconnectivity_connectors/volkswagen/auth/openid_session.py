@@ -18,13 +18,6 @@ from requests.adapters import HTTPAdapter
 
 from carconnectivity.errors import AuthenticationError, RetrievalError
 
-
-class TokenRefreshError(AuthenticationError):
-    """Exception raised when token refresh fails with HTTP 400 status."""
-    def __init__(self, message, response=None):
-        super().__init__(message)
-        self.response = response
-
 from carconnectivity_connectors.volkswagen.auth.auth_util import add_bearer_auth_header
 from carconnectivity_connectors.volkswagen.auth.helpers.blacklist_retry import BlacklistRetry
 
@@ -33,6 +26,11 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger("carconnectivity.connectors.volkswagen.auth")
 
+class TokenRefreshError(AuthenticationError):
+    """Exception raised when token refresh fails with HTTP 400 status."""
+    def __init__(self, message, response=None):
+        super().__init__(message)
+        self.response = response
 
 class AccessType(Enum):
     """
