@@ -234,6 +234,22 @@ class OpenIDSession(requests.Session):
             return self._token.get('id_token')
         return None
 
+    @id_token.setter
+    def id_token(self, new_id_token):
+        """
+        Sets a new ID token.
+
+        Args:
+            new_id_token (str): The new ID token to be set. If None, removes the id_token from the token dict.
+        """
+        if self._token is None and new_id_token is not None:
+            self._token = {}
+        if self._token is not None:
+            if new_id_token is None:
+                self._token.pop('id_token', None)
+            else:
+                self._token['id_token'] = new_id_token
+
     @property
     def token_type(self):
         """
