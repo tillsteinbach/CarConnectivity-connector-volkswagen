@@ -18,6 +18,13 @@ from requests.adapters import HTTPAdapter
 
 from carconnectivity.errors import AuthenticationError, RetrievalError
 
+
+class TokenRefreshError(AuthenticationError):
+    """Exception raised when token refresh fails with HTTP 400 status."""
+    def __init__(self, message, response=None):
+        super().__init__(message)
+        self.response = response
+
 from carconnectivity_connectors.volkswagen.auth.auth_util import add_bearer_auth_header
 from carconnectivity_connectors.volkswagen.auth.helpers.blacklist_retry import BlacklistRetry
 
@@ -291,21 +298,65 @@ class OpenIDSession(requests.Session):
         """
         self.metadata['userId'] = new_user_id
 
+    def _invalidate_tokens(self):
+        """
+        Invalidates all tokens by clearing them from the session.
+        """
+        self.token = None
+        self.access_token = None
+        self.refresh_token = None
+        self.id_token = None
+
     def login(self):
         """
-        Logs in the user, needs to be implemetned in subclass
+        Logs in the user, needs to be implemented in subclass
 
-        This method sets the `last_login` attribute to the current time.
+        This method sets the `last_login` attribute to the current time
+        after invalidating any existing tokens.
         """
+        self._invalidate_tokens()
         self.last_login = time.time()
 
     def refresh(self):
         """
-        Refresh the current session, needs to be implemetned in subclass
-
-        This method is intended to refresh the authentication session.
-        Currently, it is not implemented and does not perform any actions.
+        Refresh the current session using the refresh token.
+        
+        Raises:
+            TokenRefreshError: If refresh fails with HTTP 400 status
+            AuthenticationError: For other authentication failures
+            RetrievalError: For network or server errors
         """
+        if not self.refresh_token:
+            raise MissingTokenError(description="Missing refresh token")
+
+        try:
+            response = super().request(
+                'POST',
+                self.refresh_url,
+                data={
+                    'grant_type': 'refresh_token',
+                    'refresh_token': self.refresh_token,
+                    'client_id': self.client_id
+                },
+                access_type=AccessType.REFRESH
+            )
+            
+            if response.status_code == 400:
+                error_msg = f"Token refresh failed with HTTP 400: {response.text}"
+                LOG.error(error_msg, extra={
+                    'status_code': response.status_code,
+                    'response_body': response.text,
+                    'refresh_url': self.refresh_url
+                })
+                raise TokenRefreshError(error_msg, response=response)
+                
+            response.raise_for_status()
+            self.token = self.parse_from_body(response.text)
+            return self.token
+            
+        except requests.exceptions.RequestException as e:
+            LOG.error("Token refresh request failed: %s", str(e), exc_info=True)
+            raise RetrievalError("Token refresh request failed") from e
 
     def authorization_url(self, url, state=None, **kwargs):
         """
@@ -374,19 +425,15 @@ class OpenIDSession(requests.Session):
                 self.access_token = None
                 try:
                     self.refresh()
+                except TokenRefreshError as refresh_error:
+                    LOG.warning('Token refresh failed with HTTP 400 - invalidating tokens and forcing re-login')
+                    self._invalidate_tokens()
+                    self.login()
                 except AuthenticationError as auth_error:
                     # Check if this is a "Server requests new authorization" error
                     if 'Server requests new authorization' in str(auth_error):
-                        LOG.warning('Server requests new authorization - clearing tokens and forcing re-login')
-                        # Clear all tokens to force fresh login
-                        if hasattr(self, 'clear_tokens'):
-                            self.clear_tokens()
-                        else:
-                            # Fallback for base class
-                            self.token = None
-                            self.access_token = None
-                            self.refresh_token = None
-                            self.id_token = None
+                        LOG.warning('Server requests new authorization - invalidating tokens and forcing re-login')
+                        self._invalidate_tokens()
                     LOG.info('Authentication failed during refresh - attempting new login')
                     self.login()
                 except TokenExpiredError:
