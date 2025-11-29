@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.9.3] - 2025-11-29
+### Added
+- Added config option 'force_enable_access' for cars that do not report the 'access' capability but have door/window functionality in the app. Setting this to true may bring back door and window status.
+
 ## [0.9.2] - 2025-11-25
 ### Fixed
 - Fixes the failing login after the login procedure on server side was changed (a very big thank you to user @bragra)
@@ -113,7 +117,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.9.2...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.3
 [0.9.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.2
 [0.9.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.1
 [0.9]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9
