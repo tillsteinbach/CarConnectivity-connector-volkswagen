@@ -144,6 +144,11 @@ class Connector(BaseConnector):
         if 'max_age' in config:
             self.active_config['max_age'] = config['max_age']
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
+        self.active_config['online_timeout'] = self.active_config['interval'] + 60
+        if 'online_timeout' in config:
+            self.active_config['online_timeout'] = config['online_timeout']
+        self.online_timeout: timedelta = timedelta(seconds=self.active_config['online_timeout'])
+
 
         self.active_config['force_enable_access'] = False
         if 'force_enable_access' in config:
@@ -540,6 +545,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'carType' in range_status and range_status['carType'] is not None:
                             try:
                                 car_type = GenericVehicle.Type(range_status['carType'])
@@ -654,6 +660,7 @@ class Connector(BaseConnector):
                     if 'value' in data['measurements']['fuelLevelStatus'] and data['measurements']['fuelLevelStatus']['value'] is not None:
                         fuel_level_status = data['measurements']['fuelLevelStatus']['value']
                         captured_at: datetime = robust_time_parse(fuel_level_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         # Check vehicle type and if it does not match the current vehicle type, create a new vehicle object using copy constructor
                         if 'carType' in fuel_level_status and fuel_level_status['carType'] is not None:
                             try:
@@ -735,6 +742,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in range_status or range_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(range_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'electricRange' in range_status and range_status['electricRange'] is not None:
                             if isinstance(vehicle, VolkswagenElectricVehicle):
                                 electric_drive: Optional[ElectricDrive] = vehicle.get_electric_drive()
@@ -760,6 +768,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in odometer_status or odometer_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(odometer_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'odometer' in odometer_status and odometer_status['odometer'] is not None:
                             # pylint: disable-next=protected-access
                             vehicle.odometer._set_value(value=odometer_status['odometer'], measured=captured_at, unit=Length.KM)
@@ -775,6 +784,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in temperature_outside_status or temperature_outside_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(temperature_outside_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'temperatureOutside_K' in temperature_outside_status and temperature_outside_status['temperatureOutside_K'] is not None:
                             # pylint: disable-next=protected-access
                             vehicle.outside_temperature._set_value(value=temperature_outside_status['temperatureOutside_K'], measured=captured_at,
@@ -791,6 +801,7 @@ class Connector(BaseConnector):
                                 if 'carCapturedTimestamp' not in temperature_battery_status or temperature_battery_status['carCapturedTimestamp'] is None:
                                     raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                                 captured_at: datetime = robust_time_parse(temperature_battery_status['carCapturedTimestamp'])
+                                self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                                 if 'temperatureHvBatteryMin_K' in temperature_battery_status \
                                         and temperature_battery_status['temperatureHvBatteryMin_K'] is not None:
                                     # pylint: disable-next=protected-access
@@ -827,6 +838,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in access_status or access_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(access_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         seen_door_ids: set[str] = set()
                         if 'doors' in access_status and access_status['doors'] is not None:
                             all_doors_closed = True
@@ -947,6 +959,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in lights_status or lights_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(lights_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'lights' in lights_status and lights_status['lights'] is not None:
                             all_lights_off = True
                             for light_status in lights_status['lights']:
@@ -1006,6 +1019,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in climatisation_status or climatisation_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(climatisation_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'climatisationState' in climatisation_status and climatisation_status['climatisationState'] is not None:
                             if climatisation_status['climatisationState'] in [item.value for item in VolkswagenClimatization.ClimatizationState]:
                                 climatization_state: VolkswagenClimatization.ClimatizationState = \
@@ -1037,6 +1051,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in climatisation_settings or climatisation_settings['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(climatisation_settings['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         preferred_unit: Temperature = Temperature.C
                         precision: float = 0.5
                         if 'unitInCar' in climatisation_settings and climatisation_settings['unitInCar'] is not None:
@@ -1197,6 +1212,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in window_heating_status or window_heating_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(window_heating_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'windowHeatingStatus' in window_heating_status and window_heating_status['windowHeatingStatus'] is not None:
                             heating_on: bool = False
                             all_heating_invalid: bool = True
@@ -1261,6 +1277,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in charging_status or charging_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(charging_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'chargingState' in charging_status and charging_status['chargingState'] is not None:
                             if charging_status['chargingState'] in [item.value for item in VolkswagenCharging.VolkswagenChargingState]:
                                 volkswagen_charging_state = VolkswagenCharging.VolkswagenChargingState(charging_status['chargingState'])
@@ -1310,6 +1327,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in charging_settings or charging_settings['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(charging_settings['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'maxChargeCurrentAC_A' in charging_settings and charging_settings['maxChargeCurrentAC_A'] is not None:
                             if isinstance(vehicle.charging.settings, VolkswagenCharging.Settings):
                                 vehicle.charging.settings.max_current_in_ampere = True
@@ -1384,6 +1402,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in plug_status or plug_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(plug_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'plugConnectionState' in plug_status and plug_status['plugConnectionState'] is not None:
                             if plug_status['plugConnectionState'] in [item.value for item in ChargingConnector.ChargingConnectorConnectionState]:
                                 plug_state: ChargingConnector.ChargingConnectorConnectionState = \
@@ -1429,6 +1448,7 @@ class Connector(BaseConnector):
                         if 'carCapturedTimestamp' not in maintenance_status or maintenance_status['carCapturedTimestamp'] is None:
                             raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
                         captured_at: datetime = robust_time_parse(maintenance_status['carCapturedTimestamp'])
+                        self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
                         if 'inspectionDue_days' in maintenance_status and maintenance_status['inspectionDue_days'] is not None:
                             inspection_due: timedelta = timedelta(days=maintenance_status['inspectionDue_days'])
                             inspection_date: datetime = captured_at + inspection_due
@@ -1513,6 +1533,7 @@ class Connector(BaseConnector):
             if 'carCapturedTimestamp' not in data['data'] or data['data']['carCapturedTimestamp'] is None:
                 raise APIError('Could not fetch vehicle status, carCapturedTimestamp missing')
             captured_at: datetime = robust_time_parse(data['data']['carCapturedTimestamp'])
+            self._update_online_tracking(vehicle=vehicle, last_measurement=captured_at)
 
             if 'lat' in data['data'] and data['data']['lat'] is not None and 'lon' in data['data'] and data['data']['lon'] is not None:
                 vehicle.position.latitude._set_value(data['data']['lat'], measured=captured_at)  # pylint: disable=protected-access
@@ -1528,6 +1549,31 @@ class Connector(BaseConnector):
             vehicle.position.latitude._set_value(None)  # pylint: disable=protected-access
             vehicle.position.longitude._set_value(None)  # pylint: disable=protected-access
             vehicle.position.position_type._set_value(None)  # pylint: disable=protected-access
+
+    def _update_online_tracking(self, vehicle: VolkswagenVehicle, last_measurement: Optional[datetime]) -> None:
+        if last_measurement is not None and (vehicle.last_measurement is None or last_measurement > vehicle.last_measurement):
+            if (last_measurement + self.online_timeout) > datetime.now(tz=timezone.utc):
+                rest_timeout: timedelta = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
+                # Only set to online if the timeout is greater than 60 seconds
+                if rest_timeout.total_seconds() > 60:
+                    LOG.info('Vehicle %s is online', vehicle.vin.value)
+                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.ONLINE)  # pylint: disable=protected-access
+                    if vehicle.online_timeout_timer is not None:
+                        vehicle.online_timeout_timer.cancel()
+                    rest_timeout = (last_measurement + self.online_timeout) - datetime.now(tz=timezone.utc)
+                    vehicle.online_timeout_timer = threading.Timer(rest_timeout.total_seconds(), self._set_vehicle_offline, args=[vehicle])
+                    vehicle.online_timeout_timer.start()
+            vehicle.last_measurement = last_measurement
+
+    def _set_vehicle_offline(self, vehicle: VolkswagenVehicle) -> None:
+        last_online_measurement: Optional[datetime] = vehicle.last_measurement
+        # The car goes offline approximatly 2 minutes after the last measurement
+        if last_online_measurement is not None:
+            last_online_measurement += timedelta(seconds=120)
+        vehicle.connection_state._set_value(vehicle.official_connection_state, measured=last_online_measurement)  # pylint: disable=protected-access
+        vehicle.online_timeout_timer = None
+        if vehicle.official_connection_state is not None:
+            LOG.info('Vehicle %s went from online to %s', vehicle.vin.value, vehicle.official_connection_state.value)
 
     def _record_elapsed(self, elapsed: timedelta) -> None:
         """
