@@ -87,8 +87,8 @@ class Connector(BaseConnector):
         self._background_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
-        self.connection_state: EnumAttribute = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
-                                                             value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
+        self.connection_state: EnumAttribute[ConnectionState] = EnumAttribute(name="connection_state", parent=self, value_type=ConnectionState,
+                                                                              value=ConnectionState.DISCONNECTED, tags={'connector_custom'})
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.interval.minimum = timedelta(seconds=180)
         self.interval._is_changeable = True  # pylint: disable=protected-access
