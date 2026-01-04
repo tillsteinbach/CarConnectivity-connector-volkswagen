@@ -22,23 +22,23 @@ class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attribu
     This class extends the Charging class and includes an enumeration of various
     charging states specific to Volkswagen vehicles.
     """
-    def __init__(self, vehicle: ElectricVehicle | None = None, origin: Optional[Charging] = None) -> None:
+    def __init__(self, vehicle: Optional[ElectricVehicle] = None, origin: Optional[Charging] = None, initialization: Optional[Dict] = None) -> None:
         if origin is not None:
-            super().__init__(vehicle=vehicle, origin=origin)
+            super().__init__(vehicle=vehicle, origin=origin, initialization=initialization)
             self.settings = VolkswagenCharging.Settings(parent=self, origin=origin.settings)
         else:
-            super().__init__(vehicle=vehicle)
-            self.settings = VolkswagenCharging.Settings(parent=self, origin=self.settings)
+            super().__init__(vehicle=vehicle, initialization=initialization)
+            self.settings = VolkswagenCharging.Settings(parent=self, initialization=self.get_initialization('settings'))
 
     class Settings(Charging.Settings):
         """
         This class represents the settings for car volkswagen car charging.
         """
-        def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Charging.Settings] = None) -> None:
+        def __init__(self, parent: Optional[GenericObject] = None, origin: Optional[Charging.Settings] = None, initialization: Optional[Dict] = None) -> None:
             if origin is not None:
-                super().__init__(parent=parent, origin=origin)
+                super().__init__(parent=parent, origin=origin, initialization=initialization)
             else:
-                super().__init__(parent=parent)
+                super().__init__(parent=parent, initialization=initialization)
             self.max_current_in_ampere: Optional[bool] = None
 
     class VolkswagenChargingState(Enum,):
