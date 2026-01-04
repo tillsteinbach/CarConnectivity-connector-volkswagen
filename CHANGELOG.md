@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.10] - 2026-01-04
+### Added
+- Support for initializing attributes on startup form static entries in the configuration
+- Guessing of vehicle online state based on last successful data fetch time and configured interval
+
+Note: This connector is required for compatibility with CarConnectivity version 0.11 and higher.
+
 ## [0.9.3] - 2025-11-29
 ### Added
 - Added config option 'force_enable_access' for cars that do not report the 'access' capability but have door/window functionality in the app. Setting this to true may bring back door and window status.
@@ -117,7 +124,8 @@ All notable changes to this project will be documented in this file.
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.9.3...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10...HEAD
+[0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10
 [0.9.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.3
 [0.9.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.2
 [0.9.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.1
