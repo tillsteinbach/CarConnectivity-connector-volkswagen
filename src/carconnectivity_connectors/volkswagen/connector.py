@@ -1507,7 +1507,9 @@ class Connector(BaseConnector):
                         if 'connectionState' in readiness_status and readiness_status['connectionState'] is not None:
                             if 'isOnline' in readiness_status['connectionState'] and readiness_status['connectionState']['isOnline'] is not None:
                                 if readiness_status['connectionState']['isOnline'] is True:
-                                    vehicle.connection_state._set_value(GenericVehicle.ConnectionState.REACHABLE)  # pylint: disable=protected-access
+                                    if vehicle.connection_state.value != GenericVehicle.ConnectionState.ONLINE:
+                                        vehicle.connection_state._set_value(GenericVehicle.ConnectionState.REACHABLE)  # pylint: disable=protected-access
+                                    vehicle.official_connection_state = GenericVehicle.ConnectionState.REACHABLE
                                 else:
                                     vehicle.connection_state._set_value(GenericVehicle.ConnectionState.OFFLINE)  # pylint: disable=protected-access
                             else:
