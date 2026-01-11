@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.10.1] - 2026-01-11
+### Fixed
+- Fixes online state calculation
+- Fixes compatibility with CarConnectivity version 0.11.5
+
 ## [0.10] - 2026-01-04
 ### Added
 - Support for initializing attributes on startup form static entries in the configuration
@@ -124,7 +129,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.1
 [0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10
 [0.9.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.3
 [0.9.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.2
