@@ -18,10 +18,10 @@ class ConnectorUI(BaseConnectorUI):
     """
     A user interface class for the Volkswagen connector in the Car Connectivity application.
     """
-    def __init__(self, connector: BaseConnector):
+    def __init__(self, connector: BaseConnector, app: flask.Flask, *args, **kwargs):
         blueprint: Optional[flask.Blueprint] = flask.Blueprint(name=connector.id, import_name='carconnectivity-connector-volkswagen', url_prefix=f'/{connector.id}',
                                                                template_folder=os.path.dirname(__file__) + '/templates')
-        super().__init__(connector, blueprint=blueprint)
+        super().__init__(connector, blueprint=blueprint, app=app, *args, **kwargs)
 
     def get_nav_items(self) -> List[Dict[Literal['text', 'url', 'sublinks', 'divider'], Union[str, List]]]:
         """
