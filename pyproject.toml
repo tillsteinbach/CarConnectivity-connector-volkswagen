@@ -14,7 +14,7 @@ authors = [
     { name = "Till Steinbach" }
 ]
 dependencies = [
-    "carconnectivity>=0.11",
+    "carconnectivity>=0.11.4",
     "oauthlib~=3.3.1",
     "requests~=2.32.5",
     "pyjwt~=2.10"
