@@ -176,12 +176,11 @@ class WeConnectSession(VWWebSession):
                                        access_type=AccessType.ID)  # pyright: ignore reportCallIssue
             if token_response.status_code != requests.codes['ok']:
                 raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary WeConnect failure: {token_response.status_code}')
-            # parse token from response body
+            # parse token from response body (this internally sets self.token)
             token = self.parse_from_body(token_response.text)
-            
-            # Ensure the token is properly stored in the session
+
+            # Verify token was parsed successfully
             if token is not None:
-                self.token = token  # Explicitly store the token
                 LOG.debug(f"Successfully fetched tokens. Access token expires in: {token.get('expires_in', 'unknown')} seconds")
                 LOG.debug(f"Refresh token available: {'refresh_token' in token}")
                 # Verify critical tokens are present
@@ -215,10 +214,8 @@ class WeConnectSession(VWWebSession):
             token['refresh_token'] = token.pop('refreshToken')
         # generate json from fixed dict
         fixed_token_response = to_unicode(json.dumps(token)).encode("utf-8")
-        # Let OAuthlib parse the token
+        # Let OAuthlib parse the token (this internally sets self.token)
         parsed_token = super(WeConnectSession, self).parse_from_body(token_response=fixed_token_response, state=state)
-        # Ensure the token is stored in the session object
-        self.token = parsed_token
         return parsed_token
 
     def refresh_tokens(
@@ -308,12 +305,15 @@ class WeConnectSession(VWWebSession):
             timeout = 30
 
         # Request new tokens using POST with form data
+        # CRITICAL: withhold_token=True prevents adding Bearer token to token refresh request
+        # Token refresh uses refresh_token in the body, NOT Bearer token in headers
         token_response = self.post(
             token_url,
             data=body,
             headers=tHeaders,
             timeout=timeout,
             verify=verify,
+            withhold_token=True,
             proxies=proxies,
         )
         
@@ -323,12 +323,12 @@ class WeConnectSession(VWWebSession):
         elif token_response.status_code in (requests.codes['internal_server_error'], requests.codes['service_unavailable'], requests.codes['gateway_timeout']):
             raise TemporaryAuthenticationError(f'Token could not be refreshed due to temporary WeConnect failure: {token_response.status_code}')
         elif token_response.status_code == requests.codes['ok']:
-            # parse new tokens from response
+            # parse new tokens from response (this internally sets self.token)
             new_token = self.parse_from_body(token_response.text)
             if new_token is not None and "refresh_token" not in new_token:
                 LOG.debug("No new refresh token given. Re-using old.")
                 new_token["refresh_token"] = refresh_token
-                # Update the token property as well
+                # Update the token property to include the refresh_token
                 self.token = new_token
             LOG.debug("Successfully refreshed tokens")
             return new_token
