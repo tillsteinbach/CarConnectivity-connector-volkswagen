@@ -117,7 +117,11 @@ class OpenIDSession(requests.Session):
                                      status_forcelist=[500],
                                      status_blacklist=[429],
                                      raise_on_status=False)
-            self.mount('https://', HTTPAdapter(max_retries=retries))
+            # Configure connection pool to prevent stale connection reuse
+            # pool_connections: number of connection pools to cache
+            # pool_maxsize: maximum number of connections to save in the pool
+            # This helps prevent "Remote end closed connection without response" errors
+            self.mount('https://', HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20))
 
     @property
     def token(self):
@@ -291,6 +295,25 @@ class OpenIDSession(requests.Session):
         """
         self.metadata['userId'] = new_user_id
 
+    def login_with_retry(self):
+        """
+        Wrapper around login() that retries once on connection errors.
+
+        This handles stale connections that cause "Remote end closed connection without response" errors.
+        """
+        try:
+            self.login()
+        except requests.exceptions.ConnectionError as conn_error:
+            LOG.warning('Connection error during login, retrying once with fresh connection pool: %s', str(conn_error))
+            # Clear connection pools and retry
+            if hasattr(self, '_clear_connection_pools'):
+                try:
+                    self._clear_connection_pools()
+                except Exception as e:
+                    LOG.debug('Could not clear connection pools: %s', str(e))
+            # Retry the login once
+            self.login()
+
     def login(self):
         """
         Logs in the user, needs to be implemetned in subclass
@@ -365,7 +388,7 @@ class OpenIDSession(requests.Session):
         if access_type != AccessType.NONE and not withhold_token:
             if self.force_relogin_after is not None and self.last_login is not None and (self.last_login + self.force_relogin_after) < time.time():
                 LOG.debug("Forced new login after %ds", self.force_relogin_after)
-                self.login()
+                self.login_with_retry()
             try:
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
             # Attempt to retrieve and save new access token if expired
@@ -388,18 +411,27 @@ class OpenIDSession(requests.Session):
                             self.refresh_token = None
                             self.id_token = None
                     LOG.info('Authentication failed during refresh - attempting new login')
-                    self.login()
+                    self.login_with_retry()
                 except TokenExpiredError:
-                    self.login()
+                    self.login_with_retry()
                 except MissingTokenError:
-                    self.login()
+                    self.login_with_retry()
                 except RetrievalError:
                     LOG.error('Retrieval Error while refreshing token. Probably the token was invalidated. Trying to do a new login instead.')
-                    self.login()
+                    self.login_with_retry()
+                except requests.exceptions.ConnectionError as conn_error:
+                    LOG.warning('Connection error during token refresh (%s) - attempting new login', str(conn_error))
+                    # Connection errors during refresh often mean stale connections
+                    # Clear tokens and do a fresh login to establish new connection
+                    if hasattr(self, 'clear_tokens'):
+                        self.clear_tokens()
+                    else:
+                        self.token = None
+                    self.login_with_retry()
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
             except MissingTokenError:
                 LOG.info('Missing token, need new login')
-                self.login()
+                self.login_with_retry()
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
 
         if timeout is None:
@@ -445,7 +477,7 @@ class OpenIDSession(requests.Session):
                 token = self.refresh_token
             else:
                 if not self.authorized:
-                    self.login()
+                    self.login_with_retry()
                 if not self.access_token:
                     raise MissingTokenError(description="Missing access token.")
                 if self.expired:

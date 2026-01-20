@@ -44,7 +44,10 @@ class VWWebSession(OpenIDSession):
 
         self.websession: requests.Session = requests.Session()
         self.websession.proxies.update(self.proxies)
-        self.websession.mount('https://', HTTPAdapter(max_retries=retries))
+        # Configure connection pool to prevent stale connection reuse during login attempts
+        # This is critical because login happens after token refresh failures
+        # and stale connections cause "Remote end closed connection without response" errors
+        self.websession.mount('https://', HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20))
         self.websession.headers = CaseInsensitiveDict({
             'user-agent': 'Volkswagen/3.51.1-android/14',
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,'
@@ -55,6 +58,31 @@ class VWWebSession(OpenIDSession):
             'x-android-package-name': 'com.volkswagen.weconnect',
             'upgrade-insecure-requests': '1',
         })
+
+    def _clear_connection_pools(self) -> None:
+        """
+        Clear connection pools to prevent stale connection reuse.
+
+        This should be called before login attempts to ensure fresh connections
+        are established, preventing "Remote end closed connection without response" errors.
+        """
+        try:
+            # Clear the main session's connection pool
+            for adapter in self.adapters.values():
+                if hasattr(adapter, 'poolmanager') and adapter.poolmanager is not None:
+                    adapter.poolmanager.clear()
+            LOG.debug("Cleared main session connection pool before login")
+        except Exception as e:
+            LOG.debug("Could not clear main session connection pool: %s", str(e))
+
+        try:
+            # Clear the websession's connection pool
+            for adapter in self.websession.adapters.values():
+                if hasattr(adapter, 'poolmanager') and adapter.poolmanager is not None:
+                    adapter.poolmanager.clear()
+            LOG.debug("Cleared websession connection pool before login")
+        except Exception as e:
+            LOG.debug("Could not clear websession connection pool: %s", str(e))
 
     def do_web_auth(self, url: str) -> str:
         """

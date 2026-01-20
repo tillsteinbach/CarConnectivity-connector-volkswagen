@@ -80,6 +80,10 @@ class WeConnectSession(VWWebSession):
 
     def login(self):
         super(WeConnectSession, self).login()
+        # Clear connection pools before login to prevent stale connection reuse
+        # This is critical to prevent "Remote end closed connection without response" errors
+        if hasattr(self, '_clear_connection_pools'):
+            self._clear_connection_pools()
         # retrieve authorization URL
         authorization_url_str: str = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
         # perform web authentication
@@ -266,6 +270,20 @@ class WeConnectSession(VWWebSession):
         if not refresh_token:
             raise AuthenticationError('No refresh token available. Please log in again.')
 
+        # Close any idle connections to prevent reusing stale connections
+        # This helps prevent "Remote end closed connection without response" errors
+        # that occur when trying to reuse a connection that the server has closed
+        try:
+            # Get the HTTPAdapter and close idle connections in the pool
+            adapter = self.get_adapter(token_url)
+            if hasattr(adapter, 'poolmanager') and adapter.poolmanager is not None:
+                # Clear idle connections from the pool
+                adapter.poolmanager.clear()
+                LOG.debug("Cleared connection pool before token refresh")
+        except Exception as e:
+            # If clearing fails, log but continue - not critical
+            LOG.debug("Could not clear connection pool: %s", str(e))
+
         # Create headers matching the examples format
         tHeaders = {
             "Accept-Encoding": "gzip, deflate, br",
@@ -281,6 +299,13 @@ class WeConnectSession(VWWebSession):
             "refresh_token": refresh_token,
             "client_id": self.client_id,
         }
+
+        # Use a shorter timeout for token refresh to prevent stale connection issues
+        # Token endpoints should respond quickly; 30 seconds is more than enough
+        # This prevents holding connections open for 180 seconds which can lead to
+        # "Remote end closed connection without response" errors
+        if timeout is None:
+            timeout = 30
 
         # Request new tokens using POST with form data
         token_response = self.post(
