@@ -29,7 +29,6 @@ from carconnectivity.units import Temperature
 from carconnectivity.command_impl import ClimatizationStartStopCommand, WakeSleepCommand, HonkAndFlashCommand, LockUnlockCommand, ChargingStartStopCommand, \
     WindowHeatingStartStopCommand
 from carconnectivity.climatization import Climatization
-from carconnectivity.commands import Commands
 from carconnectivity.charging import Charging
 from carconnectivity.charging_connector import ChargingConnector
 from carconnectivity.position import Position
@@ -93,8 +92,6 @@ class Connector(BaseConnector):
         self.interval: DurationAttribute = DurationAttribute(name="interval", parent=self, tags={'connector_custom'})
         self.interval.minimum = timedelta(seconds=180)
         self.interval._is_changeable = True  # pylint: disable=protected-access
-
-        self.commands: Commands = Commands(parent=self)
 
         LOG.info("Loading volkswagen connector with config %s", config_remove_credentials(config))
 
