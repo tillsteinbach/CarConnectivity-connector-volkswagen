@@ -172,7 +172,7 @@ class Connector(BaseConnector):
             self.session.refresh()
         else:
             LOG.debug("No existing tokens found, performing initial login")
-            self.session.login()
+            self.session.login_with_retry()
 
         self._elapsed: List[timedelta] = []
 
@@ -438,8 +438,13 @@ class Connector(BaseConnector):
                                                     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")  # pyright: ignore[reportPossiblyUnboundVariable]
                                                     self.session.cache[imageurl] = (img_str, str(datetime.utcnow()))
                                             elif image_download_response.status_code == requests.codes['unauthorized']:
-                                                LOG.info('Server asks for new authorization')
-                                                self.session.login()
+                                                LOG.info('Got 401 Unauthorized - attempting token refresh')
+                                                try:
+                                                    self.session.refresh()
+                                                    LOG.debug('Token refresh successful, retrying request')
+                                                except Exception as refresh_error:
+                                                    LOG.info(f'Token refresh failed ({refresh_error}), attempting full login')
+                                                    self.session.login_with_retry()
                                                 image_download_response = self.session.get(imageurl, stream=True)
                                                 if image_download_response.status_code == requests.codes['ok']:
                                                     img = Image.open(image_download_response.raw)  # pyright: ignore[reportPossiblyUnboundVariable]
@@ -1618,8 +1623,13 @@ class Connector(BaseConnector):
                     raise TooManyRequestsError('Could not fetch data due to too many requests from your account. '
                                                f'Status Code was: {status_response.status_code}')
                 elif status_response.status_code == requests.codes['unauthorized']:
-                    LOG.info('Server asks for new authorization')
-                    session.login()
+                    LOG.info('Got 401 Unauthorized - attempting token refresh')
+                    try:
+                        session.refresh()
+                        LOG.debug('Token refresh successful, retrying request')
+                    except Exception as refresh_error:
+                        LOG.info(f'Token refresh failed ({refresh_error}), attempting full login')
+                        session.login_with_retry()
                     status_response = session.get(url, allow_redirects=False)
 
                     if status_response.status_code in (requests.codes['ok'], requests.codes['multiple_status']):

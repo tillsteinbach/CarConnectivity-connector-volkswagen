@@ -80,6 +80,10 @@ class WeConnectSession(VWWebSession):
 
     def login(self):
         super(WeConnectSession, self).login()
+        # Clear connection pools before login to prevent stale connection reuse
+        # This is critical to prevent "Remote end closed connection without response" errors
+        if hasattr(self, '_clear_connection_pools'):
+            self._clear_connection_pools()
         # retrieve authorization URL
         authorization_url_str: str = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
         # perform web authentication
@@ -172,12 +176,11 @@ class WeConnectSession(VWWebSession):
                                        access_type=AccessType.ID)  # pyright: ignore reportCallIssue
             if token_response.status_code != requests.codes['ok']:
                 raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary WeConnect failure: {token_response.status_code}')
-            # parse token from response body
+            # parse token from response body (this internally sets self.token)
             token = self.parse_from_body(token_response.text)
-            
-            # Ensure the token is properly stored in the session
+
+            # Verify token was parsed successfully
             if token is not None:
-                self.token = token  # Explicitly store the token
                 LOG.debug(f"Successfully fetched tokens. Access token expires in: {token.get('expires_in', 'unknown')} seconds")
                 LOG.debug(f"Refresh token available: {'refresh_token' in token}")
                 # Verify critical tokens are present
@@ -211,10 +214,8 @@ class WeConnectSession(VWWebSession):
             token['refresh_token'] = token.pop('refreshToken')
         # generate json from fixed dict
         fixed_token_response = to_unicode(json.dumps(token)).encode("utf-8")
-        # Let OAuthlib parse the token
+        # Let OAuthlib parse the token (this internally sets self.token)
         parsed_token = super(WeConnectSession, self).parse_from_body(token_response=fixed_token_response, state=state)
-        # Ensure the token is stored in the session object
-        self.token = parsed_token
         return parsed_token
 
     def refresh_tokens(
@@ -266,6 +267,20 @@ class WeConnectSession(VWWebSession):
         if not refresh_token:
             raise AuthenticationError('No refresh token available. Please log in again.')
 
+        # Close any idle connections to prevent reusing stale connections
+        # This helps prevent "Remote end closed connection without response" errors
+        # that occur when trying to reuse a connection that the server has closed
+        try:
+            # Get the HTTPAdapter and close idle connections in the pool
+            adapter = self.get_adapter(token_url)
+            if hasattr(adapter, 'poolmanager') and adapter.poolmanager is not None:
+                # Clear idle connections from the pool
+                adapter.poolmanager.clear()
+                LOG.debug("Cleared connection pool before token refresh")
+        except Exception as e:
+            # If clearing fails, log but continue - not critical
+            LOG.debug("Could not clear connection pool: %s", str(e))
+
         # Create headers matching the examples format
         tHeaders = {
             "Accept-Encoding": "gzip, deflate, br",
@@ -282,13 +297,23 @@ class WeConnectSession(VWWebSession):
             "client_id": self.client_id,
         }
 
+        # Use a shorter timeout for token refresh to prevent stale connection issues
+        # Token endpoints should respond quickly; 30 seconds is more than enough
+        # This prevents holding connections open for 180 seconds which can lead to
+        # "Remote end closed connection without response" errors
+        if timeout is None:
+            timeout = 30
+
         # Request new tokens using POST with form data
+        # CRITICAL: withhold_token=True prevents adding Bearer token to token refresh request
+        # Token refresh uses refresh_token in the body, NOT Bearer token in headers
         token_response = self.post(
             token_url,
             data=body,
             headers=tHeaders,
             timeout=timeout,
             verify=verify,
+            withhold_token=True,
             proxies=proxies,
         )
         
@@ -298,12 +323,12 @@ class WeConnectSession(VWWebSession):
         elif token_response.status_code in (requests.codes['internal_server_error'], requests.codes['service_unavailable'], requests.codes['gateway_timeout']):
             raise TemporaryAuthenticationError(f'Token could not be refreshed due to temporary WeConnect failure: {token_response.status_code}')
         elif token_response.status_code == requests.codes['ok']:
-            # parse new tokens from response
+            # parse new tokens from response (this internally sets self.token)
             new_token = self.parse_from_body(token_response.text)
             if new_token is not None and "refresh_token" not in new_token:
                 LOG.debug("No new refresh token given. Re-using old.")
                 new_token["refresh_token"] = refresh_token
-                # Update the token property as well
+                # Update the token property to include the refresh_token
                 self.token = new_token
             LOG.debug("Successfully refreshed tokens")
             return new_token

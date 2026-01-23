@@ -117,7 +117,11 @@ class OpenIDSession(requests.Session):
                                      status_forcelist=[500],
                                      status_blacklist=[429],
                                      raise_on_status=False)
-            self.mount('https://', HTTPAdapter(max_retries=retries))
+            # Configure connection pool to prevent stale connection reuse
+            # pool_connections: number of connection pools to cache
+            # pool_maxsize: maximum number of connections to save in the pool
+            # This helps prevent "Remote end closed connection without response" errors
+            self.mount('https://', HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20))
 
     @property
     def token(self):
@@ -136,37 +140,62 @@ class OpenIDSession(requests.Session):
 
         Args:
             new_token (dict): The new token to be set. If the token does not contain 'expires_in',
-                              it will be set to the same value as the current token's 'expires_in'
+                              it will try to decode access_token JWT and calculate 'expires_in'
                               or default to 3600 seconds. If 'expires_in' is provided but 'expires_at'
                               is not, 'expires_at' will be calculated based on the current time.
 
         Returns:
             None
         """
+
         if new_token is not None:
-            # If new token e.g. after refresh is missing expires_in we assume it is the same than before
+            # ALWAYS decode the access_token JWT to see what it actually says
+            jwt_expires_in = None
+            jwt_expires_at = None
+            server_expires_in = new_token.get('expires_in')
+
+            if 'access_token' in new_token:
+                try:
+                    meta_data = jwt.decode(new_token['access_token'], options={"verify_signature": False})
+                    if 'exp' in meta_data:
+                        jwt_expires_at = meta_data['exp']
+                        expires_at_dt = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
+                        jwt_expires_in = (expires_at_dt - datetime.now(tz=timezone.utc)).total_seconds()
+                        LOG.debug(f"JWT says access_token expires in: {jwt_expires_in:.0f} seconds")
+                except jwt.exceptions.DecodeError:
+                    LOG.warning("Could not decode access_token JWT")
+
+            # Log comparison if server provided expires_in
+            if server_expires_in is not None and jwt_expires_in is not None:
+                server_val = float(server_expires_in)
+                LOG.debug(f"Server says: {server_val:.0f}s, JWT says: {jwt_expires_in:.0f}s, Difference: {abs(server_val - jwt_expires_in):.0f}s")
+
+            # Now decide which value to use
             if 'expires_in' not in new_token:
-                if self._token is not None and 'expires_in' in self._token:
-                    new_token['expires_in'] = self._token['expires_in']
+                # Server didn't provide expires_in, use JWT or fallback
+                if jwt_expires_in is not None:
+                    new_token['expires_in'] = jwt_expires_in
+                    new_token['expires_at'] = jwt_expires_at
+                    LOG.debug("Using JWT expiry (server didn't provide expires_in)")
                 else:
-                    if 'id_token' in new_token:
-                        try:
-                            meta_data = jwt.decode(new_token['id_token'], options={"verify_signature": False})
-                            if 'exp' in meta_data:
-                                new_token['expires_at'] = meta_data['exp']
-                                expires_at = datetime.fromtimestamp(meta_data['exp'], tz=timezone.utc)
-                                new_token['expires_in'] = (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
-                            else:
-                                new_token['expires_in'] = 3600
-                        except jwt.exceptions.DecodeError:
-                            # Invalid JWT token, use default expiration
-                            LOG.debug("Invalid JWT token provided, using default expiration")
-                            new_token['expires_in'] = 3600
-                    else:
-                        new_token['expires_in'] = 3600
+                    new_token['expires_in'] = 3600
+                    LOG.debug("Using default 3600s expiry")
             # If expires_in is set and expires_at is not set we calculate expires_at from expires_in using the current time
             if 'expires_in' in new_token and 'expires_at' not in new_token:
                 new_token['expires_at'] = time.time() + int(new_token.get('expires_in'))
+
+            # Ensure expires_in and expires_at are always numeric (VW may send them as strings)
+            if 'expires_in' in new_token:
+                try:
+                    new_token['expires_in'] = float(new_token['expires_in'])
+                except (ValueError, TypeError):
+                    LOG.warning(f"Could not convert expires_in to float: {new_token['expires_in']}")
+            if 'expires_at' in new_token:
+                try:
+                    new_token['expires_at'] = float(new_token['expires_at'])
+                except (ValueError, TypeError):
+                    LOG.warning(f"Could not convert expires_at to float: {new_token['expires_at']}")
+
         self._token = new_token
 
     @property
@@ -291,6 +320,25 @@ class OpenIDSession(requests.Session):
         """
         self.metadata['userId'] = new_user_id
 
+    def login_with_retry(self):
+        """
+        Wrapper around login() that retries once on connection errors.
+
+        This handles stale connections that cause "Remote end closed connection without response" errors.
+        """
+        try:
+            self.login()
+        except requests.exceptions.ConnectionError as conn_error:
+            LOG.warning('Connection error during login, retrying once with fresh connection pool: %s', str(conn_error))
+            # Clear connection pools and retry
+            if hasattr(self, '_clear_connection_pools'):
+                try:
+                    self._clear_connection_pools()
+                except Exception as e:
+                    LOG.debug('Could not clear connection pools: %s', str(e))
+            # Retry the login once
+            self.login()
+
     def login(self):
         """
         Logs in the user, needs to be implemetned in subclass
@@ -365,13 +413,14 @@ class OpenIDSession(requests.Session):
         if access_type != AccessType.NONE and not withhold_token:
             if self.force_relogin_after is not None and self.last_login is not None and (self.last_login + self.force_relogin_after) < time.time():
                 LOG.debug("Forced new login after %ds", self.force_relogin_after)
-                self.login()
+                self.login_with_retry()
             try:
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
             # Attempt to retrieve and save new access token if expired
             except TokenExpiredError:
                 LOG.info('Token expired')
-                self.access_token = None
+                # Don't clear access_token here - it will be replaced by refresh()
+                # Clearing it causes MissingTokenError during the refresh request itself
                 try:
                     self.refresh()
                 except AuthenticationError as auth_error:
@@ -388,18 +437,27 @@ class OpenIDSession(requests.Session):
                             self.refresh_token = None
                             self.id_token = None
                     LOG.info('Authentication failed during refresh - attempting new login')
-                    self.login()
+                    self.login_with_retry()
                 except TokenExpiredError:
-                    self.login()
+                    self.login_with_retry()
                 except MissingTokenError:
-                    self.login()
+                    self.login_with_retry()
                 except RetrievalError:
                     LOG.error('Retrieval Error while refreshing token. Probably the token was invalidated. Trying to do a new login instead.')
-                    self.login()
+                    self.login_with_retry()
+                except requests.exceptions.ConnectionError as conn_error:
+                    LOG.warning('Connection error during token refresh (%s) - attempting new login', str(conn_error))
+                    # Connection errors during refresh often mean stale connections
+                    # Clear tokens and do a fresh login to establish new connection
+                    if hasattr(self, 'clear_tokens'):
+                        self.clear_tokens()
+                    else:
+                        self.token = None
+                    self.login_with_retry()
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
             except MissingTokenError:
                 LOG.info('Missing token, need new login')
-                self.login()
+                self.login_with_retry()
                 url, headers, data = self.add_token(url, body=data, headers=headers, access_type=access_type, token=token)
 
         if timeout is None:
@@ -445,7 +503,7 @@ class OpenIDSession(requests.Session):
                 token = self.refresh_token
             else:
                 if not self.authorized:
-                    self.login()
+                    self.login_with_retry()
                 if not self.access_token:
                     raise MissingTokenError(description="Missing access token.")
                 if self.expired:
