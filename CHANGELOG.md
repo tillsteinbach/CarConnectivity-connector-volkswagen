@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.10.2] - 2026-01-23
+### Fixed
+- Improves handling of token refresh (thanks to user @mikrohard)
+- Vehicle images will not be downloaded more often than every 24h
+
 ## [0.10.1] - 2026-01-11
 ### Fixed
 - Fixes online state calculation
@@ -129,7 +134,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.1...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.2
 [0.10.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.1
 [0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10
 [0.9.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.9.3
