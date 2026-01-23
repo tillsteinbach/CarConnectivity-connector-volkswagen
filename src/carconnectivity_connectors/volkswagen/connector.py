@@ -141,6 +141,10 @@ class Connector(BaseConnector):
         self.active_config['max_age'] = self.active_config['interval'] - 1
         if 'max_age' in config:
             self.active_config['max_age'] = config['max_age']
+        if 'max_age_static' in config:
+            self.active_config['max_age_static'] = config['max_age_static']
+        else:
+            self.active_config['max_age_static'] = 864000  # 24 hours
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
         self.active_config['online_timeout'] = self.active_config['interval'] + 60
         if 'online_timeout' in config:
@@ -418,13 +422,13 @@ class Connector(BaseConnector):
                                     img = None
                                     cache_date = None
                                     imageurl: str = image['url']
-                                    if self.active_config['max_age'] is not None and self.session.cache is not None and imageurl in self.session.cache:
+                                    if self.active_config['max_age_static'] is not None and self.session.cache is not None and imageurl in self.session.cache:
                                         img, cache_date_string = self.session.cache[imageurl]
                                         img = base64.b64decode(img)  # pyright: ignore[reportPossiblyUnboundVariable]
                                         img = Image.open(io.BytesIO(img))  # pyright: ignore[reportPossiblyUnboundVariable]
                                         cache_date = datetime.fromisoformat(cache_date_string)
-                                    if img is None or self.active_config['max_age'] is None \
-                                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age']))):
+                                    if img is None or self.active_config['max_age_static'] is None \
+                                            or (cache_date is not None and cache_date < (datetime.utcnow() - timedelta(seconds=self.active_config['max_age_static']))):
                                         try:
                                             image_download_response = self.session.get(imageurl, stream=True)
                                             if image_download_response.status_code == requests.codes['ok']:
