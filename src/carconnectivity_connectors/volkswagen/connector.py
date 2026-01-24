@@ -144,7 +144,7 @@ class Connector(BaseConnector):
         if 'max_age_static' in config:
             self.active_config['max_age_static'] = config['max_age_static']
         else:
-            self.active_config['max_age_static'] = 864000  # 24 hours
+            self.active_config['max_age_static'] = 86400  # 24 hours
         self.interval._set_value(timedelta(seconds=self.active_config['interval']))  # pylint: disable=protected-access
         self.active_config['online_timeout'] = self.active_config['interval'] + 60
         if 'online_timeout' in config:
