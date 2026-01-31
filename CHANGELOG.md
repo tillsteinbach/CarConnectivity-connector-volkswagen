@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.10.3] - 2026-01-31
+### Added
+- Added support for fetching charging station information based on latitude and longitude
+
 ## [0.10.2] - 2026-01-23
 ### Fixed
 - Improves handling of token refresh (thanks to user @mikrohard)
@@ -134,7 +138,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.2...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.3...HEAD
+[0.10.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.3
 [0.10.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.2
 [0.10.1]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.1
 [0.10]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10
