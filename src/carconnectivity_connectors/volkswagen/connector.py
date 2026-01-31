@@ -45,6 +45,7 @@ from carconnectivity_connectors.volkswagen.capability import Capability
 from carconnectivity_connectors.volkswagen._version import __version__
 from carconnectivity_connectors.volkswagen.command_impl import SpinCommand
 from carconnectivity_connectors.volkswagen.charging import VolkswagenCharging, mapping_volskwagen_charging_state
+from carconnectivity_connectors.volkswagen.services.volkswagen_location_service import VolkswagenLocationService
 
 
 SUPPORT_IMAGES = False
@@ -151,7 +152,6 @@ class Connector(BaseConnector):
             self.active_config['online_timeout'] = config['online_timeout']
         self.online_timeout: timedelta = timedelta(seconds=self.active_config['online_timeout'])
 
-
         self.active_config['force_enable_access'] = False
         if 'force_enable_access' in config:
             self.active_config['force_enable_access'] = config['force_enable_access']
@@ -176,6 +176,10 @@ class Connector(BaseConnector):
             self.session.login_with_retry()
 
         self._elapsed: List[timedelta] = []
+
+        self.location_service: VolkswagenLocationService = VolkswagenLocationService("volkswagen_location_service", car_connectivity, LOG, self)
+        for service_type, priority in self.location_service.get_types():
+            self.car_connectivity.add_service_for(service_type, self.location_service, priority)
 
     def startup(self) -> None:
         self._background_thread = threading.Thread(target=self._background_loop, daemon=False)
