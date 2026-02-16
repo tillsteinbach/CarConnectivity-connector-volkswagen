@@ -1119,6 +1119,12 @@ class Connector(BaseConnector):
                         # pylint: disable-next=protected-access
                         vehicle.climatization.settings.target_temperature._add_on_set_hook(self.__on_air_conditioning_settings_change)
                         vehicle.climatization.settings.target_temperature._is_changeable = True  # pylint: disable=protected-access
+                        # Notify observers that attribute is now enabled/changeable (triggers MQTT subscription)
+                        vehicle.climatization.settings.target_temperature.notify(
+                            vehicle.climatization.settings.target_temperature.ObserverEvent.ENABLED
+                        )
+                        LOG.debug(f'Temperature hook registered for VIN {vehicle.vin.value}, '
+                                  f'is_changeable={vehicle.climatization.settings.target_temperature._is_changeable}')
                         if 'climatisationWithoutExternalPower' in climatisation_settings \
                                 and climatisation_settings['climatisationWithoutExternalPower'] is not None:
                             vehicle.climatization.settings.climatization_without_external_power._set_value(  # pylint: disable=protected-access
@@ -1126,6 +1132,7 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.climatization_without_external_power._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.climatization_without_external_power._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.climatization_without_external_power.notify(vehicle.climatization.settings.climatization_without_external_power.ObserverEvent.ENABLED)
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.climatization_without_external_power._set_value(None, measured=captured_at)
@@ -1135,6 +1142,9 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.climatization_at_unlock._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.climatization_at_unlock._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.climatization_at_unlock.notify(
+                                vehicle.climatization.settings.climatization_at_unlock.ObserverEvent.ENABLED
+                            )
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.climatization_at_unlock._set_value(None, measured=captured_at)
@@ -1144,6 +1154,7 @@ class Connector(BaseConnector):
                         # pylint: disable-next=protected-access
                             vehicle.climatization.settings.window_heating._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.window_heating._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.window_heating.notify(vehicle.climatization.settings.window_heating.ObserverEvent.ENABLED)
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.window_heating._set_value(None, measured=captured_at)
@@ -1153,6 +1164,7 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.front_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.front_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.front_zone_left_enabled.notify(vehicle.climatization.settings.front_zone_left_enabled.ObserverEvent.ENABLED)
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.front_zone_left_enabled._set_value(None, measured=captured_at)
@@ -1162,6 +1174,7 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.front_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.front_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.front_zone_right_enabled.notify(vehicle.climatization.settings.front_zone_right_enabled.ObserverEvent.ENABLED)
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.front_zone_right_enabled._set_value(None, measured=captured_at)
@@ -1171,6 +1184,7 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_left_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.rear_zone_left_enabled._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.rear_zone_left_enabled.notify(vehicle.climatization.settings.rear_zone_left_enabled.ObserverEvent.ENABLED)
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_left_enabled._set_value(None, measured=captured_at)
@@ -1180,6 +1194,7 @@ class Connector(BaseConnector):
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_right_enabled._add_on_set_hook(self.__on_air_conditioning_settings_change)
                             vehicle.climatization.settings.rear_zone_right_enabled._is_changeable = True  # pylint: disable=protected-access
+                            vehicle.climatization.settings.rear_zone_right_enabled.notify(vehicle.climatization.settings.rear_zone_right_enabled.ObserverEvent.ENABLED)
                         else:
                             # pylint: disable-next=protected-access
                             vehicle.climatization.settings.rear_zone_right_enabled._set_value(None, measured=captured_at)
@@ -1227,7 +1242,7 @@ class Connector(BaseConnector):
                     vehicle.climatization.settings.rear_zone_right_enabled._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.seat_heating._set_value(None)  # pylint: disable=protected-access
                     vehicle.climatization.settings.heater_source._set_value(None)  # pylint: disable=protected-access
-                
+
                 if 'windowHeatingStatus' in data['climatisation'] and data['climatisation']['windowHeatingStatus'] is not None:
                     if 'value' in data['climatisation']['windowHeatingStatus'] and data['climatisation']['windowHeatingStatus']['value'] is not None:
                         window_heating_status = data['climatisation']['windowHeatingStatus']['value']
@@ -1730,10 +1745,14 @@ class Connector(BaseConnector):
             setting_dict['zoneRearRightEnabled'] = settings.rear_zone_right_enabled.value
 
         url: str = f'https://emea.bff.cariad.digital/vehicle/v1/vehicles/{vin}/climatisation/settings'
+        LOG.info(f'Sending climatization settings to VW API')
+        LOG.debug(f'API URL: {url}')
+        LOG.debug(f'Settings payload: {json.dumps(setting_dict, indent=2)}')
+
         try:
             settings_response: requests.Response = self.session.put(url, data=json.dumps(setting_dict), allow_redirects=True)
             if settings_response.status_code != requests.codes['ok']:
-                LOG.error('Could not set climatization settings (%s)', settings_response.status_code)
+                LOG.error('Could not set climatization settings - HTTP %s: %s', settings_response.status_code, settings_response.text)
                 raise SetterError(f'Could not set value ({settings_response.status_code})')
         except requests.exceptions.ConnectionError as connection_error:
             raise SetterError(f'Connection error: {connection_error}.'
