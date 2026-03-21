@@ -78,5 +78,14 @@ login test@test.de
 password testpassword123
 account 1234
 ```
+
+### Known issues
+#### Locking/Unlocking and door status
+Some cars do not announce the `ACCESS` capability although being able to lock/unlock and/or show the door status. You can fix this by adding `"force_enable_access": true` to the configuration of the connector
+#### Unexpected keys found
+Not all items that are presented in the data from the server are already implemented by the connector. Feel free to report interesting findings in your log data in the [Discussions](https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/discussions) section or as an [Issue (Enhancement)](https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/issues). My time is very limited, so usually new features take some time to get into the library, also because I need to align functionallity between the connectors of all brands.
+#### 2 Factor Authentification
+Some users currently report that the API is asking for a two factor auth. I have not seen this behaviour myself and currently also do not see an easy way to automate 2FA with a code coming in via email. The work-around that seems to work is to login via the browser on the machine running carconnectivity and put in the 2FA code.
+
 ### Limitations
 The connector is not working with US based vehicles. If you are looking for a connector for your Volkswagen in North America, use this connector instead: [CarConnectivity-connector-volkswagen-na](https://github.com/zackcornelius/CarConnectivity-connector-volkswagen-na)
