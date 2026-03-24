@@ -4,8 +4,10 @@ Module implements a VW Web session.
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import json
 import logging
-from urllib.parse import parse_qsl, urlparse, urlsplit, urljoin
+import re
+from urllib.parse import parse_qsl, urlparse, urlsplit, urljoin, parse_qs
 
 from urllib3.util.retry import Retry
 
@@ -180,6 +182,9 @@ class VWWebSession(OpenIDSession):
                 raise RetrievalError('Temporary server error during login')
 
             if 'Location' not in response.headers:
+                if response.status_code == requests.codes['ok']:
+                    url = self._handle_intermediate_page(url, response)
+                    continue
                 if 'consent' in url:
                     raise AuthenticationError('Could not find Location in headers, probably due to missing consent. Try visiting: ' + url)
                 raise APICompatibilityError('Forwarding without Location in headers')
@@ -441,6 +446,10 @@ class VWWebSession(OpenIDSession):
                 raise RetrievalError('Temporary server error during new auth flow')
             
             if 'Location' not in response.headers:
+                if response.status_code == requests.codes['ok']:
+                    LOG.debug('[_handle_new_auth_flow] Got 200 OK, handling intermediate page')
+                    redirect_url = self._handle_intermediate_page(redirect_url, response)
+                    continue
                 LOG.debug(f"DEBUG [_handle_new_auth_flow]: No Location header in response, status code: {response.status_code}")
                 raise APICompatibilityError('No Location header in redirect')
             
@@ -463,6 +472,222 @@ class VWWebSession(OpenIDSession):
         
         LOG.debug(f"DEBUG [_handle_new_auth_flow]: Exiting redirect loop after max iterations, returning URL: {redirect_url[:150]}")
         return redirect_url
+
+    @staticmethod
+    def _extract_idk_data(html: str) -> dict | None:
+        """Extract the window._IDK JSON data embedded in VW identity pages."""
+        m = re.search(r'window\._IDK\s*=\s*(\{.*?\})\s*;?\s*</script>', html, re.DOTALL)
+        if not m:
+            return None
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return None
+
+    def _handle_intermediate_page(self, url: str, response: requests.Response) -> str:
+        """Dispatch handler for intermediate 200 OK pages in the redirect chain.
+
+        VW may inject pages like marketing consent or MFA challenges between
+        the credential POST and the final OAuth callback redirect.
+
+        Returns the next URL to follow.
+        """
+        if 'marketing-consent' in url:
+            return self._handle_marketing_consent(url, response)
+
+        idk = self._extract_idk_data(response.text)
+        page_type = ''
+        if idk:
+            page_type = idk.get('Data', {}).get('page', '')
+            LOG.debug('Intermediate page type from IDK: %s', page_type)
+
+        if page_type == 'marketingConsent':
+            return self._handle_marketing_consent(url, response)
+
+        mfa_indicators = ('mfa', 'email-verification', 'emailVerification',
+                          'mfaEmail', 'otpVerification', 'emailCode')
+        if page_type in mfa_indicators or any(kw in url.lower() for kw in ('mfa', 'verify', 'email-verification')):
+            return self._handle_mfa_page(url, response, idk)
+
+        LOG.warning('Unknown intermediate page at %s (IDK page=%s)', url, page_type)
+        raise APICompatibilityError(
+            f'Unexpected intermediate page during login: {page_type or url}. '
+            'You may need to log in via the smartphone app or browser first.'
+        )
+
+    def _handle_marketing_consent(self, url: str, response: requests.Response) -> str:
+        """Auto-skip the VW marketing consent page.
+
+        The page is a JS SPA that submits to either
+        .../marketing-consent/accept or .../marketing-consent/skip.
+        We always skip (decline marketing).
+        """
+        LOG.info('Marketing consent page detected — auto-skipping')
+
+        idk = self._extract_idk_data(response.text)
+        if not idk:
+            raise APICompatibilityError('Could not parse marketing consent page data')
+
+        data = idk.get('Data', {})
+        base_url = data.get('baseUrl', 'https://identity.vwgroup.io/v2')
+
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+
+        form_data: Dict[str, str] = {}
+        form_data['state'] = qs.get('state', [''])[0]
+        form_data['relayState'] = data.get('relayStateToken') or qs.get('relayState', [''])[0]
+        if data.get('mdKey'):
+            form_data['mdKey'] = data['mdKey']
+
+        for ch in data.get('channels', []):
+            ch_id = ch.get('channelId', '')
+            ch_type = ch.get('channelType', '')
+            if ch_type == 'NOT_USED':
+                form_data[f'channel{ch_id}'] = 'not_used'
+            else:
+                form_data[f'channel{ch_id}'] = 'false'
+
+        skip_url = f'{base_url}/login/ui/marketing-consent/skip'
+        LOG.debug('POSTing marketing consent skip to %s', skip_url)
+
+        resp = self.websession.post(skip_url, data=form_data, allow_redirects=False)
+        if resp.status_code == requests.codes['internal_server_error']:
+            raise RetrievalError('Server error while skipping marketing consent')
+
+        if resp.status_code in (requests.codes['found'], requests.codes['see_other']):
+            if 'Location' not in resp.headers:
+                raise APICompatibilityError('Marketing consent skip redirect has no Location header')
+            return resp.headers['Location']
+
+        raise APICompatibilityError(
+            f'Marketing consent skip returned unexpected status {resp.status_code}'
+        )
+
+    def _handle_mfa_page(self, url: str, response: requests.Response, idk: dict | None = None) -> str:
+        """Handle an email-based MFA challenge page.
+
+        Parses the page to find the code submission form, prompts the user
+        for the verification code on stdin, and submits it.
+        """
+        LOG.warning('MFA email verification page detected at %s', url)
+        LOG.warning('VW has sent a verification code to your email address.')
+
+        if idk is None:
+            idk = self._extract_idk_data(response.text)
+
+        idk_data = idk.get('Data', {}) if idk else {}
+        page_type = idk_data.get('page', '')
+        base_url = idk_data.get('baseUrl', 'https://identity.vwgroup.io/v2')
+
+        # Parse HTML forms from the page
+        from html.parser import HTMLParser
+
+        class _FormParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.forms: list[dict] = []
+                self._current: dict | None = None
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag == 'form':
+                    self._current = {'action': a.get('action', ''), 'method': a.get('method', 'POST'), 'inputs': {}}
+                elif tag == 'input' and self._current is not None:
+                    name = a.get('name')
+                    if name:
+                        self._current['inputs'][name] = {
+                            'value': a.get('value', ''),
+                            'type': a.get('type', 'text'),
+                        }
+
+            def handle_endtag(self, tag):
+                if tag == 'form' and self._current is not None:
+                    self.forms.append(self._current)
+                    self._current = None
+
+        parser = _FormParser()
+        parser.feed(response.text)
+
+        # Find the MFA form: look for a form with a single text-like input besides 'state'
+        mfa_form = None
+        code_field = None
+        for f in parser.forms:
+            for name, info in f['inputs'].items():
+                if info['type'] in ('text', 'number', 'tel', '') and name != 'state':
+                    mfa_form = f
+                    code_field = name
+                    break
+            if mfa_form:
+                break
+
+        # Prompt the user for the code
+        try:
+            code = input('Enter the VW email verification code: ').strip()
+        except (EOFError, KeyboardInterrupt):
+            raise AuthenticationError(
+                'MFA email verification required but no code provided. '
+                'Please log in via the smartphone app or browser to complete MFA, '
+                'then retry.'
+            )
+
+        if not code:
+            raise AuthenticationError(
+                'MFA email verification required but no code provided.'
+            )
+
+        # Build and submit the form
+        if mfa_form and code_field:
+            form_data = {name: info['value'] for name, info in mfa_form['inputs'].items()}
+            form_data[code_field] = code
+
+            action = mfa_form['action']
+            if action.startswith('/'):
+                submit_url = f'https://identity.vwgroup.io{action}'
+            elif action.startswith('http'):
+                submit_url = action
+            else:
+                submit_url = url
+        else:
+            # Fallback: construct from IDK data
+            form_data = {'code': code}
+            parsed = urlparse(url)
+            qs = parse_qs(parsed.query)
+            if idk_data.get('state'):
+                form_data['state'] = idk_data['state']
+            elif 'state' in qs:
+                form_data['state'] = qs['state'][0]
+            if idk_data.get('relayStateToken'):
+                form_data['relayState'] = idk_data['relayStateToken']
+            elif 'relayState' in qs:
+                form_data['relayState'] = qs['relayState'][0]
+
+            submit_url = f'{base_url}/login/ui/{page_type}' if page_type else url
+
+        LOG.debug('Submitting MFA code to %s', submit_url)
+        resp = self.websession.post(submit_url, data=form_data, allow_redirects=False)
+
+        if resp.status_code in (requests.codes['found'], requests.codes['see_other']):
+            if 'Location' in resp.headers:
+                return resp.headers['Location']
+            raise APICompatibilityError('MFA submit redirect has no Location header')
+
+        if resp.status_code == requests.codes['ok']:
+            # Could be "wrong code" — check for error indicators or a JS redirect
+            js_match = re.search(
+                r'(?:window\.location|location\.href)\s*=\s*["\']([^"\']+)["\']',
+                resp.text, re.IGNORECASE,
+            )
+            if js_match:
+                return js_match.group(1)
+
+            raise AuthenticationError(
+                'MFA code submission failed. The code may be incorrect or expired.'
+            )
+
+        raise APICompatibilityError(
+            f'MFA code submission returned unexpected status {resp.status_code}'
+        )
 
     def _handle_consent_form(self, url: str) -> str:
         response = self.websession.get(url, allow_redirects=False)
