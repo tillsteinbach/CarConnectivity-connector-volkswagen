@@ -147,7 +147,7 @@ Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
 [unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.5...HEAD
-[0.10.5]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.4...v0.10.5
+[0.10.5]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.5
 [0.10.4]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.4
 [0.10.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.3
 [0.10.2]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.2
