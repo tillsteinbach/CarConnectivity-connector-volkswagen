@@ -358,6 +358,12 @@ class VWWebSession(OpenIDSession):
             LOG.info("OAuth callback URL already present in new auth flow, returning immediately")
             return url
         
+        plain_headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'accept-encoding': 'gzip, deflate',
+            'connection': 'keep-alive',
+        }
+
         # Get the authorization page (manually follow redirects to avoid custom scheme issues)
         max_initial_redirects = 5
         while max_initial_redirects > 0:
@@ -366,7 +372,7 @@ class VWWebSession(OpenIDSession):
                 LOG.info(f"Found custom scheme URL during initial auth page fetch")
                 return url
                 
-            response = self.websession.get(url, allow_redirects=False)
+            response = self.websession.get(url, headers=plain_headers, allow_redirects=False)
             
             if response.status_code == requests.codes['ok']:
                 break
@@ -400,7 +406,13 @@ class VWWebSession(OpenIDSession):
         # Post to login URL
         login_url = f'https://identity.vwgroup.io/u/login?state={state}'
         LOG.debug(f"Posting to login URL: {login_url}")
-        response = self.websession.post(login_url, data=login_form, allow_redirects=False)
+        login_headers = {
+            **plain_headers,
+            'content-type': 'application/x-www-form-urlencoded',
+            'referer': login_url,
+            'origin': 'https://identity.vwgroup.io',
+        }
+        response = self.websession.post(login_url, headers=login_headers, data=login_form, allow_redirects=False)
         
         if response.status_code not in (requests.codes['found'], requests.codes['see_other']):
             raise AuthenticationError(f'Login failed with status code: {response.status_code}')
@@ -435,7 +447,7 @@ class VWWebSession(OpenIDSession):
             LOG.debug(f"DEBUG [_handle_new_auth_flow]: URL after urljoin: {redirect_url[:150]}")
             
             LOG.debug(f"DEBUG [_handle_new_auth_flow]: Making HTTP GET request to: {redirect_url[:100]}")
-            response = self.websession.get(redirect_url, allow_redirects=False)
+            response = self.websession.get(redirect_url, headers=plain_headers, allow_redirects=False)
             
             if response.status_code == requests.codes['internal_server_error']:
                 raise RetrievalError('Temporary server error during new auth flow')
