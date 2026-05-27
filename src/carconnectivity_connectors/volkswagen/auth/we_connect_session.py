@@ -95,7 +95,7 @@ class WeConnectSession(VWWebSession):
     def refresh(self) -> None:
         # refresh tokens from refresh endpoint
         self.refresh_tokens(
-            'https://emea.bff.cariad.digital/login/v1/idk/token',
+            'https://emea.bff.cariad.digital/user-login/refresh/v1',
         )
 
     def clear_tokens(self) -> None:
@@ -281,22 +281,6 @@ class WeConnectSession(VWWebSession):
             # If clearing fails, log but continue - not critical
             LOG.debug("Could not clear connection pool: %s", str(e))
 
-        # Create headers matching the examples format
-        tHeaders = {
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "Volkswagen/3.51.1-android/14",
-            "x-android-package-name": "com.volkswagen.weconnect",
-        }
-
-        # Create form data body matching the examples format
-        body = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": self.client_id,
-        }
-
         # Use a shorter timeout for token refresh to prevent stale connection issues
         # Token endpoints should respond quickly; 30 seconds is more than enough
         # This prevents holding connections open for 180 seconds which can lead to
@@ -304,17 +288,16 @@ class WeConnectSession(VWWebSession):
         if timeout is None:
             timeout = 30
 
-        # Request new tokens using POST with form data
-        # CRITICAL: withhold_token=True prevents adding Bearer token to token refresh request
-        # Token refresh uses refresh_token in the body, NOT Bearer token in headers
-        token_response = self.post(
+        # Request new tokens using GET with the refresh token sent as Bearer in the
+        # Authorization header (access_type=AccessType.REFRESH). VW's new Auth0-based
+        # BFF endpoint /user-login/refresh/v1 replaced the legacy IDK POST endpoint.
+        token_response = self.get(
             token_url,
-            data=body,
-            headers=tHeaders,
             timeout=timeout,
             verify=verify,
-            withhold_token=True,
+            withhold_token=False,
             proxies=proxies,
+            access_type=AccessType.REFRESH,
         )
         
         if token_response.status_code == requests.codes['unauthorized']:
