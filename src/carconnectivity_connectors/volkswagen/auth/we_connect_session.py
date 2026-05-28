@@ -4,6 +4,8 @@ Module implements the WeConnect Session handling.
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import base64
+import hashlib
 import json
 import logging
 import secrets
@@ -54,6 +56,9 @@ class WeConnectSession(VWWebSession):
             'x-android-package-name': 'com.volkswagen.weconnect'
         })
 
+        # PKCE code_verifier is generated per-login and consumed by fetch_tokens
+        self._code_verifier = None
+
     def request(
         self,
         method,
@@ -88,20 +93,20 @@ class WeConnectSession(VWWebSession):
         authorization_url_str: str = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
         # perform web authentication
         response = self.do_web_auth(authorization_url_str)
-        # fetch tokens from web authentication response
-        self.fetch_tokens('https://emea.bff.cariad.digital/user-login/login/v1',
+        # fetch tokens from web authentication response using the cariad BFF OIDC token endpoint
+        self.fetch_tokens('https://emea.bff.cariad.digital/auth/v1/idk/oidc/token',
                           authorization_response=response)
 
     def refresh(self) -> None:
-        # refresh tokens from refresh endpoint
+        # refresh tokens from the cariad BFF OIDC token endpoint
         self.refresh_tokens(
-            'https://emea.bff.cariad.digital/user-login/refresh/v1',
+            'https://emea.bff.cariad.digital/auth/v1/idk/oidc/token',
         )
 
     def clear_tokens(self) -> None:
         """
         Clear all stored tokens to force a fresh login.
-        
+
         This method is useful when the server requests new authorization
         and we need to clear invalid/expired tokens.
         """
@@ -115,8 +120,16 @@ class WeConnectSession(VWWebSession):
         if self.redirect_uri is None:
             raise AuthenticationError('Redirect URI is not set')
 
+        # Generate PKCE code_verifier and code_challenge (RFC 7636 S256)
+        self._code_verifier = secrets.token_urlsafe(32)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(self._code_verifier.encode()).digest()
+        ).rstrip(b'=').decode('ascii')
+
         params: list[Tuple[str, str]] = [(('redirect_uri', self.redirect_uri)),
-                                         (('nonce', generate_nonce()))]
+                                         (('nonce', generate_nonce())),
+                                         (('code_challenge_method', 'S256')),
+                                         (('code_challenge', code_challenge))]
 
         # add required parameters redirect_uri and nonce to the authorization URL
         auth_url: str = add_params_to_uri('https://emea.bff.cariad.digital/user-login/v1/authorize', params)
@@ -156,24 +169,31 @@ class WeConnectSession(VWWebSession):
         # take token from authorization response (those are stored in self.token now!)
         self.parse_from_fragment(authorization_response)
 
-        if self.token is not None and all(key in self.token for key in ('state', 'id_token', 'access_token', 'code')):
-            # Generate json body for token request
-            body: str = json.dumps(
-                {
-                    'state': self.token['state'],
-                    'id_token': self.token['id_token'],
-                    'redirect_uri': self.redirect_uri,
-                    'region': 'emea',
-                    'access_token': self.token['access_token'],
-                    'authorizationCode': self.token['code'],
-                })
+        if self.token is not None and 'code' in self.token:
+            # Exchange the authorization code for tokens using the standard OIDC
+            # authorization_code grant at the cariad BFF OIDC endpoint.
+            # VW removed the legacy WeConnect SSO exchange endpoint (/user-login/login/v1)
+            # in May 2026; the OIDC endpoint requires PKCE when a code_challenge was sent.
+            body = {
+                'grant_type': 'authorization_code',
+                'code': self.token['code'],
+                'redirect_uri': self.redirect_uri,
+                'client_id': self.client_id,
+            }
+            if self._code_verifier is not None:
+                body['code_verifier'] = self._code_verifier
+                self._code_verifier = None  # consume verifier after use
 
-            request_headers: CaseInsensitiveDict = self.headers  # pyright: ignore reportAssignmentType
-            request_headers['accept'] = 'application/json'
+            token_headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+                'User-Agent': 'Volkswagen/3.51.1-android/14',
+                'x-android-package-name': 'com.volkswagen.weconnect',
+            }
 
             # request tokens from token_url
-            token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
-                                       access_type=AccessType.ID)  # pyright: ignore reportCallIssue
+            token_response = self.post(token_url, headers=token_headers, data=body, allow_redirects=False,
+                                       withhold_token=True)  # pyright: ignore reportCallIssue
             if token_response.status_code != requests.codes['ok']:
                 raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary WeConnect failure: {token_response.status_code}')
             # parse token from response body (this internally sets self.token)
@@ -184,14 +204,14 @@ class WeConnectSession(VWWebSession):
                 LOG.debug(f"Successfully fetched tokens. Access token expires in: {token.get('expires_in', 'unknown')} seconds")
                 LOG.debug(f"Refresh token available: {'refresh_token' in token}")
                 # Verify critical tokens are present
-                if not all(key in token for key in ('access_token', 'id_token', 'refresh_token')):
+                if not all(key in token for key in ('access_token', 'refresh_token')):
                     LOG.warning("Some expected tokens are missing from the response")
             else:
                 LOG.error("Token parsing returned None")
 
             return token
         else:
-            LOG.error("Authorization response missing required tokens")
+            LOG.error("Authorization response missing required code")
             return None
 
     def parse_from_body(self, token_response, state=None):
@@ -263,7 +283,7 @@ class WeConnectSession(VWWebSession):
             # If still None, try to get from the token dict directly
             if refresh_token is None and self.token is not None:
                 refresh_token = self.token.get('refresh_token')
-        
+
         if not refresh_token:
             raise AuthenticationError('No refresh token available. Please log in again.')
 
@@ -288,18 +308,28 @@ class WeConnectSession(VWWebSession):
         if timeout is None:
             timeout = 30
 
-        # Request new tokens using GET with the refresh token sent as Bearer in the
-        # Authorization header (access_type=AccessType.REFRESH). VW's new Auth0-based
-        # BFF endpoint /user-login/refresh/v1 replaced the legacy IDK POST endpoint.
-        token_response = self.get(
+        # Request new tokens using POST with form-encoded body to the cariad BFF OIDC
+        # token endpoint. VW's Auth0-based BFF uses standard OIDC refresh_token grant.
+        body = {
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': self.client_id,
+        }
+        token_headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'User-Agent': 'Volkswagen/3.51.1-android/14',
+            'x-android-package-name': 'com.volkswagen.weconnect',
+        }
+        token_response = self.post(
             token_url,
+            data=body,
+            headers=token_headers,
             timeout=timeout,
             verify=verify,
-            withhold_token=False,
+            withhold_token=True,
             proxies=proxies,
-            access_type=AccessType.REFRESH,
         )
-        
         if token_response.status_code == requests.codes['unauthorized']:
             LOG.error('Token refresh failed with 401 - server requests new authorization. Refresh token may be expired or invalid.')
             raise AuthenticationError('Refreshing tokens failed: Server requests new authorization. Please log in again.')
