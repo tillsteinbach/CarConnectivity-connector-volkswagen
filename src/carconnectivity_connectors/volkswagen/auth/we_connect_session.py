@@ -8,12 +8,12 @@ import json
 import logging
 import secrets
 
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qs, urlparse, urlencode
 
 import requests
 from requests.models import CaseInsensitiveDict
 
-from oauthlib.common import add_params_to_uri, generate_nonce, to_unicode
+from oauthlib.common import to_unicode
 from oauthlib.oauth2 import InsecureTransportError
 from oauthlib.oauth2 import is_secure_transport
 
@@ -23,7 +23,7 @@ from carconnectivity_connectors.volkswagen.auth.openid_session import AccessType
 from carconnectivity_connectors.volkswagen.auth.vw_web_session import VWWebSession
 
 if TYPE_CHECKING:
-    from typing import Tuple, Dict
+    from typing import Dict
 
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen.auth")
@@ -36,7 +36,7 @@ class WeConnectSession(VWWebSession):
     def __init__(self, session_user, **kwargs) -> None:
         super(WeConnectSession, self).__init__(client_id='a24fba63-34b3-4d43-b181-942111e6bda8@apps_vw-dilab_com',
                                                refresh_url='https://identity.vwgroup.io/oidc/v1/token',
-                                               scope='openid profile badge cars dealers vin',
+                                               scope='openid profile badge cars dealers vin offline_access',
                                                redirect_uri='weconnect://authenticated',
                                                state=None,
                                                session_user=session_user,
@@ -47,7 +47,7 @@ class WeConnectSession(VWWebSession):
             'content-type': 'application/json',
             'content-version': '1',
             'x-newrelic-id': 'VgAEWV9QDRAEXFlRAAYPUA==',
-            'user-agent': 'Volkswagen/3.51.1-android/14',
+            'user-agent': 'Volkswagen/3.61.0-android/14',
             'accept-language': 'de-de',
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
@@ -80,22 +80,21 @@ class WeConnectSession(VWWebSession):
 
     def login(self):
         super(WeConnectSession, self).login()
-        # Clear connection pools before login to prevent stale connection reuse
-        # This is critical to prevent "Remote end closed connection without response" errors
         if hasattr(self, '_clear_connection_pools'):
             self._clear_connection_pools()
-        # retrieve authorization URL
+        # Build hybrid OIDC authorization URL directly on identity.vwgroup.io
         authorization_url_str: str = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
-        # perform web authentication
-        response = self.do_web_auth(authorization_url_str)
-        # fetch tokens from web authentication response
-        self.fetch_tokens('https://emea.bff.cariad.digital/user-login/login/v1',
-                          authorization_response=response)
+        # Follow the web auth flow; tokens are returned in the callback URL
+        callback_url = self.do_web_auth(authorization_url_str)
+        # Extract tokens directly from the hybrid callback (no BFF exchange)
+        self.fetch_tokens(None, authorization_response=callback_url)
+        if not self.access_token:
+            raise AuthenticationError('Login failed: no access_token received in callback URL')
 
     def refresh(self) -> None:
-        # refresh tokens from refresh endpoint
+        # refresh tokens from updated CARIAD endpoint (moved May 2026)
         self.refresh_tokens(
-            'https://emea.bff.cariad.digital/login/v1/idk/token',
+            'https://emea.bff.cariad.digital/auth/v1/idk/oidc/token',
         )
 
     def clear_tokens(self) -> None:
@@ -109,90 +108,43 @@ class WeConnectSession(VWWebSession):
         self.token = None
         LOG.debug("All tokens cleared successfully")
 
-    def authorization_url(self, url, state=None, **kwargs) -> str:
-        if state is not None:
-            raise AuthenticationError('Do not provide state')
-        if self.redirect_uri is None:
-            raise AuthenticationError('Redirect URI is not set')
-
-        params: list[Tuple[str, str]] = [(('redirect_uri', self.redirect_uri)),
-                                         (('nonce', generate_nonce()))]
-
-        # add required parameters redirect_uri and nonce to the authorization URL
-        auth_url: str = add_params_to_uri('https://emea.bff.cariad.digital/user-login/v1/authorize', params)
-        try_login_response: requests.Response = self.get(auth_url, allow_redirects=False, access_type=AccessType.NONE)  # pyright: ignore reportCallIssue
-        if try_login_response.status_code != requests.codes['see_other'] or 'Location' not in try_login_response.headers:
-            raise AuthenticationError('Authorization URL could not be fetched due to WeConnect failure')
-        # Redirect is URL to authorize
-        redirect: str = try_login_response.headers['Location']
-        query: str = urlparse(redirect).query
-        query_params: Dict[str, str] = dict(parse_qsl(query))
-        if 'state' in query_params:
-            self.state = query_params['state']
-
-        return redirect
+    def parse_from_fragment(self, authorization_response, state=None):
+        """
+        Parse tokens from a hybrid OIDC callback URL that may carry params in both
+        the query string (code, state) and the fragment (access_token, id_token, …).
+        Combines both before delegating to the base class parser.
+        """
+        if authorization_response:
+            parsed = urlparse(authorization_response)
+            all_params: Dict[str, str] = {}
+            if parsed.query:
+                all_params.update({k: v[0] for k, v in parse_qs(parsed.query).items()})
+            if parsed.fragment:
+                all_params.update({k: v[0] for k, v in parse_qs(parsed.fragment).items()})
+            if all_params:
+                authorization_response = 'https://egal?' + urlencode(all_params)
+        return super().parse_from_fragment(authorization_response, state=state)
 
     def fetch_tokens(
         self,
-        token_url,
+        token_url,  # noqa: ARG002  — ignored: hybrid flow delivers tokens in callback URL
         authorization_response=None,
         **_
     ):
         """
-        Fetches tokens using the given token URL using the tokens from authorization response.
-
-        Args:
-            token_url (str): The URL to request the tokens from.
-            authorization_response (str, optional): The authorization response containing the tokens. Defaults to None.
-            **_ : Additional keyword arguments.
-
-        Returns:
-            dict: A dictionary containing the fetched tokens if successful.
-            None: If the tokens could not be fetched.
-
-        Raises:
-            TemporaryAuthenticationError: If the token request fails due to a temporary WeConnect failure.
+        Extract tokens directly from the hybrid OIDC callback URL.
+        No server-side exchange with the CARIAD BFF is performed (endpoint is closed).
         """
-        # take token from authorization response (those are stored in self.token now!)
-        self.parse_from_fragment(authorization_response)
-
-        if self.token is not None and all(key in self.token for key in ('state', 'id_token', 'access_token', 'code')):
-            # Generate json body for token request
-            body: str = json.dumps(
-                {
-                    'state': self.token['state'],
-                    'id_token': self.token['id_token'],
-                    'redirect_uri': self.redirect_uri,
-                    'region': 'emea',
-                    'access_token': self.token['access_token'],
-                    'authorizationCode': self.token['code'],
-                })
-
-            request_headers: CaseInsensitiveDict = self.headers  # pyright: ignore reportAssignmentType
-            request_headers['accept'] = 'application/json'
-
-            # request tokens from token_url
-            token_response = self.post(token_url, headers=request_headers, data=body, allow_redirects=False,
-                                       access_type=AccessType.ID)  # pyright: ignore reportCallIssue
-            if token_response.status_code != requests.codes['ok']:
-                raise TemporaryAuthenticationError(f'Token could not be fetched due to temporary WeConnect failure: {token_response.status_code}')
-            # parse token from response body (this internally sets self.token)
-            token = self.parse_from_body(token_response.text)
-
-            # Verify token was parsed successfully
-            if token is not None:
-                LOG.debug(f"Successfully fetched tokens. Access token expires in: {token.get('expires_in', 'unknown')} seconds")
-                LOG.debug(f"Refresh token available: {'refresh_token' in token}")
-                # Verify critical tokens are present
-                if not all(key in token for key in ('access_token', 'id_token', 'refresh_token')):
-                    LOG.warning("Some expected tokens are missing from the response")
-            else:
-                LOG.error("Token parsing returned None")
-
-            return token
-        else:
-            LOG.error("Authorization response missing required tokens")
+        if authorization_response is None:
+            LOG.error("fetch_tokens called without authorization_response")
             return None
+        self.parse_from_fragment(authorization_response)
+        if self.token is None or 'access_token' not in self.token:
+            LOG.error("No access_token found in callback URL")
+            return None
+        LOG.debug("Hybrid flow: access_token expires in %s seconds", self.token.get('expires_in', 'unknown'))
+        LOG.debug("Refresh token available: %s", 'refresh_token' in self.token)
+        return self.token
 
     def parse_from_body(self, token_response, state=None):
         """
@@ -286,7 +238,7 @@ class WeConnectSession(VWWebSession):
             "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "Volkswagen/3.51.1-android/14",
+            "User-Agent": "Volkswagen/3.61.0-android/14",
             "x-android-package-name": "com.volkswagen.weconnect",
         }
 

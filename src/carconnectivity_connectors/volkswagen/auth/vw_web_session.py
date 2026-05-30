@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import logging
-from urllib.parse import parse_qsl, urlparse, urlsplit, urljoin
+from urllib.parse import parse_qsl, parse_qs, urlparse, urlsplit, urljoin, urlencode
 
 from urllib3.util.retry import Retry
 
@@ -49,7 +49,7 @@ class VWWebSession(OpenIDSession):
         # and stale connections cause "Remote end closed connection without response" errors
         self.websession.mount('https://', HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20))
         self.websession.headers = CaseInsensitiveDict({
-            'user-agent': 'Volkswagen/3.51.1-android/14',
+            'user-agent': 'Volkswagen/3.61.0-android/14',
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,'
                       'application/signed-exchange;v=b3',
             'accept-language': 'en-US,en;q=0.9',
@@ -207,20 +207,20 @@ class VWWebSession(OpenIDSession):
 
         LOG.debug(f"DEBUG [do_web_auth]: Exited while loop, final URL before transformation: {url[:150]}")
         
-        # Handle the transformation based on the URL pattern
-        if url.startswith('weconnect://authenticated#'):
-            # Transform weconnect://authenticated# to https://egal?
-            transformed_url = url.replace('weconnect://authenticated#', 'https://egal?')
-            LOG.debug(f"DEBUG [do_web_auth]: Transformed weconnect://authenticated# URL to: {transformed_url[:150]}")
+        # Combine query-string and fragment params into a single parseable URL.
+        # Hybrid OIDC callback carries code/state in query and access_token/id_token in fragment.
+        parsed_cb = urlparse(url)
+        all_params: dict = {}
+        if parsed_cb.query:
+            all_params.update({k: v[0] for k, v in parse_qs(parsed_cb.query).items()})
+        if parsed_cb.fragment:
+            all_params.update({k: v[0] for k, v in parse_qs(parsed_cb.fragment).items()})
+        if all_params:
+            transformed_url = 'https://egal?' + urlencode(all_params)
+            LOG.debug("do_web_auth: callback params combined into: %s", transformed_url[:150])
             return transformed_url
-        elif self.redirect_uri and url.startswith(self.redirect_uri + '#'):
-            # Transform redirect_uri# to https://egal?
-            transformed_url = url.replace(self.redirect_uri + '#', 'https://egal?')
-            LOG.debug(f"DEBUG [do_web_auth]: Transformed redirect_uri# URL to: {transformed_url[:150]}")
-            return transformed_url
-        else:
-            LOG.warning(f"DEBUG [do_web_auth]: URL doesn't match expected patterns, returning as-is: {url[:150]}")
-            return url
+        LOG.warning("do_web_auth: no params found in callback URL: %s", url[:150])
+        return url
 
     def _get_login_form(self, url: str) -> HTMLFormParser:
         # Check for custom URL schemes before making HTTP requests
@@ -390,11 +390,12 @@ class VWWebSession(OpenIDSession):
         if not state:
             raise APICompatibilityError('Could not find state token in authorization page')
         
-        # Create login form data
+        # Create login form data — action=default required by Auth0 Universal Login
         login_form = {
             'username': self.session_user.username,
             'password': self.session_user.password,
-            'state': state
+            'state': state,
+            'action': 'default',
         }
         
         # Post to login URL

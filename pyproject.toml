@@ -41,6 +41,13 @@ classifiers = [
 [tool.setuptools_scm]
 write_to = "src/carconnectivity_connectors/volkswagen/_version.py"
 
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = ["test"]
+markers = [
+    "integration: tests that require network access and real VW credentials (deselect with '-m not integration')",
+]
+
 [tool.pylint.format]
 max-line-length=160
 ignore-patterns= "_version.py"
