@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - No unreleased changes so far
 
+## [0.10.6] - 2026-07-05
+### Changed
+- Updated dependencies
+
+> **⚠️ Warning:** This release only updates dependencies. It does **not** fix the connection issues caused by recent changes on the Volkswagen side. If you are experiencing connectivity problems, please be aware that this is a known issue originating from Volkswagen's infrastructure changes and is not addressed in this release.
+
 ## [0.10.5] - 2026-04-24
 ### Changed
 - Updated dependencies
@@ -146,7 +152,8 @@ Note: This connector is required for compatibility with CarConnectivity version 
 Initial release, let's go and give this to the public to try out...
 The API is not yet implemented completely! There is no way to control something in the car yet
 
-[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.5...HEAD
+[unreleased]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/compare/v0.10.6...HEAD
+[0.10.6]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.6
 [0.10.5]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.5
 [0.10.4]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.4
 [0.10.3]: https://github.com/tillsteinbach/CarConnectivity-connector-volkswagen/releases/tag/v0.10.3
