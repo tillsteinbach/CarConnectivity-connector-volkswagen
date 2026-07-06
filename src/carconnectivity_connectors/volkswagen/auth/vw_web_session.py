@@ -228,23 +228,35 @@ class VWWebSession(OpenIDSession):
             LOG.info(f"[_get_login_form] Custom scheme URL detected, skipping legacy auth flow")
             LOG.debug(f"DEBUG [_get_login_form]: Custom scheme URL detected, returning None: {url[:150]}")
             return None
-        
+
         # Also check if URL contains tokens already (might be a callback URL)
         if '#access_token=' in url or '#code=' in url:
             LOG.info(f"[_get_login_form] URL already contains OAuth tokens, skipping legacy auth flow")
             LOG.debug(f"DEBUG [_get_login_form]: URL contains tokens, returning None: {url[:150]}")
             return None
-            
+
+        # Auth0 rejects VW Android app headers; strip them when fetching the login page
+        plain_headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'accept-encoding': 'gzip, deflate',
+            'connection': 'keep-alive',
+            'user-agent': None,
+            'x-requested-with': None,
+            'x-android-package-name': None,
+            'upgrade-insecure-requests': None,
+            'accept-language': None,
+        }
+
         while True:
             LOG.debug(f"DEBUG [_get_login_form]: Attempting to fetch: {url[:100]}")
-            
+
             # Check for custom URL schemes during redirect loop
             if url.startswith('weconnect://'):
                 LOG.info(f"[_get_login_form] Reached OAuth callback URL during redirects: {url[:100]}")
                 LOG.debug(f"DEBUG [_get_login_form]: Custom scheme URL reached in redirect loop, returning None")
                 return None
-            
-            response = self.websession.get(url, allow_redirects=False)
+
+            response = self.websession.get(url, headers=plain_headers, allow_redirects=False)
             if response.status_code == requests.codes['ok']:
                 break
 
@@ -358,6 +370,22 @@ class VWWebSession(OpenIDSession):
             LOG.info("OAuth callback URL already present in new auth flow, returning immediately")
             return url
         
+        # Use plain browser-style headers for all Auth0 interactions.
+        # The websession carries VW Android app headers (user-agent, x-requested-with,
+        # x-android-package-name) which Auth0 rejects – especially on the credential POST.
+        # Setting those keys to None removes them from the merged request headers (requests
+        # library behaviour: request-level None values delete the corresponding session header).
+        plain_headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'accept-encoding': 'gzip, deflate',
+            'connection': 'keep-alive',
+            'user-agent': None,
+            'x-requested-with': None,
+            'x-android-package-name': None,
+            'upgrade-insecure-requests': None,
+            'accept-language': None,
+        }
+
         # Get the authorization page (manually follow redirects to avoid custom scheme issues)
         max_initial_redirects = 5
         while max_initial_redirects > 0:
@@ -366,7 +394,7 @@ class VWWebSession(OpenIDSession):
                 LOG.info(f"Found custom scheme URL during initial auth page fetch")
                 return url
                 
-            response = self.websession.get(url, allow_redirects=False)
+            response = self.websession.get(url, headers=plain_headers, allow_redirects=False)
             
             if response.status_code == requests.codes['ok']:
                 break
@@ -400,7 +428,13 @@ class VWWebSession(OpenIDSession):
         # Post to login URL
         login_url = f'https://identity.vwgroup.io/u/login?state={state}'
         LOG.debug(f"Posting to login URL: {login_url}")
-        response = self.websession.post(login_url, data=login_form, allow_redirects=False)
+        login_headers = {
+            **plain_headers,
+            'content-type': 'application/x-www-form-urlencoded',
+            'referer': login_url,
+            'origin': 'https://identity.vwgroup.io',
+        }
+        response = self.websession.post(login_url, headers=login_headers, data=login_form, allow_redirects=False)
         
         if response.status_code not in (requests.codes['found'], requests.codes['see_other']):
             raise AuthenticationError(f'Login failed with status code: {response.status_code}')
@@ -435,7 +469,7 @@ class VWWebSession(OpenIDSession):
             LOG.debug(f"DEBUG [_handle_new_auth_flow]: URL after urljoin: {redirect_url[:150]}")
             
             LOG.debug(f"DEBUG [_handle_new_auth_flow]: Making HTTP GET request to: {redirect_url[:100]}")
-            response = self.websession.get(redirect_url, allow_redirects=False)
+            response = self.websession.get(redirect_url, headers=plain_headers, allow_redirects=False)
             
             if response.status_code == requests.codes['internal_server_error']:
                 raise RetrievalError('Temporary server error during new auth flow')
