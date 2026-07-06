@@ -6,6 +6,8 @@
                 "type": "volkswagen",
                 "disabled": false,
                 "config": {
+                    "username": "YOUR_EMAIL@example.com",
+                    "password": "YOUR_PASSWORD",
                     "log_level": "debug",
                     "api_log_level": "debug",
                     "interval": 180

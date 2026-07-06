@@ -1,3 +1,6 @@
+# Integration test credentials (keep placeholder in git, ignore real copies)
+test/integration_test/carConnectivity.local.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
