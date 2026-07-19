@@ -74,7 +74,7 @@ class VolkswagenCharging(Charging):  # pylint: disable=too-many-instance-attribu
 
 
 # Mapping of Volkswagen charging states to generic charging states
-mapping_volskwagen_charging_state: Dict[VolkswagenCharging.VolkswagenChargingState, Charging.ChargingState] = {
+mapping_volkswagen_charging_state: Dict[VolkswagenCharging.VolkswagenChargingState, Charging.ChargingState] = {
     VolkswagenCharging.VolkswagenChargingState.OFF: Charging.ChargingState.OFF,
     VolkswagenCharging.VolkswagenChargingState.NOT_READY_FOR_CHARGING: Charging.ChargingState.OFF,
     VolkswagenCharging.VolkswagenChargingState.READY_FOR_CHARGING: Charging.ChargingState.READY_FOR_CHARGING,
