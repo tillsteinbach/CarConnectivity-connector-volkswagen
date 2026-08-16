@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import json
 import logging
-import secrets
 
 from urllib.parse import parse_qsl, urlparse
 
@@ -19,6 +18,16 @@ from oauthlib.oauth2 import is_secure_transport
 
 from carconnectivity.errors import AuthenticationError, RetrievalError, TemporaryAuthenticationError
 
+from carconnectivity_connectors.volkswagen.auth.login import VWLoginFlow
+from carconnectivity_connectors.volkswagen.auth.login.const import (
+    DEVICE_FLOW_CLIENT_ID,
+    DEVICE_FLOW_CLIENT_SCOPE,
+    DEVICE_FLOW_TOKEN_URL,
+)
+from carconnectivity_connectors.volkswagen.auth.login.exceptions import (
+    LoginCredentialsError,
+    LoginError,
+)
 from carconnectivity_connectors.volkswagen.auth.openid_session import AccessType
 from carconnectivity_connectors.volkswagen.auth.vw_web_session import VWWebSession
 
@@ -28,19 +37,24 @@ if TYPE_CHECKING:
 
 LOG: logging.Logger = logging.getLogger("carconnectivity.connectors.volkswagen.auth")
 
+# WeConnect app client (legacy hybrid OIDC / BFF exchange)
+WECONNECT_CLIENT_ID = 'a24fba63-34b3-4d43-b181-942111e6bda8@apps_vw-dilab_com'
+
 
 class WeConnectSession(VWWebSession):
     """
     WeConnectSession class handles the authentication and session management for Volkswagen's WeConnect service.
     """
     def __init__(self, session_user, **kwargs) -> None:
-        super(WeConnectSession, self).__init__(client_id='a24fba63-34b3-4d43-b181-942111e6bda8@apps_vw-dilab_com',
-                                               refresh_url='https://identity.vwgroup.io/oidc/v1/token',
-                                               scope='openid profile badge cars dealers vin',
+        super(WeConnectSession, self).__init__(client_id=DEVICE_FLOW_CLIENT_ID,
+                                               refresh_url=DEVICE_FLOW_TOKEN_URL,
+                                               scope=DEVICE_FLOW_CLIENT_SCOPE,
                                                redirect_uri='weconnect://authenticated',
                                                state=None,
                                                session_user=session_user,
                                                **kwargs)
+        # Track which client issued the current tokens (device-flow vs legacy BFF)
+        self._token_client_id = DEVICE_FLOW_CLIENT_ID
 
         self.headers = CaseInsensitiveDict({
             'accept': '*/*',
@@ -84,16 +98,74 @@ class WeConnectSession(VWWebSession):
         # This is critical to prevent "Remote end closed connection without response" errors
         if hasattr(self, '_clear_connection_pools'):
             self._clear_connection_pools()
-        # retrieve authorization URL
+
+        # Prefer OAuth device authorization flow (IDKit browser automation).
+        # The BFF /user-login/v1/authorize path currently returns 403 and the
+        # hybrid OIDC exchange may require Play Integrity attestation.
+        try:
+            self._login_device_flow()
+            return
+        except LoginCredentialsError:
+            raise
+        except (LoginError, AuthenticationError, requests.RequestException) as device_error:
+            LOG.warning("Device-flow login failed (%s); trying legacy hybrid OIDC login", device_error)
+
+        # Legacy: BFF authorize + web auth + BFF token exchange
+        self.client_id = WECONNECT_CLIENT_ID
+        self._token_client_id = WECONNECT_CLIENT_ID
         authorization_url_str: str = self.authorization_url(url='https://identity.vwgroup.io/oidc/v1/authorize')
-        # perform web authentication
         response = self.do_web_auth(authorization_url_str)
-        # fetch tokens from web authentication response
         self.fetch_tokens('https://emea.bff.cariad.digital/user-login/login/v1',
                           authorization_response=response)
 
+    def _login_device_flow(self) -> None:
+        """Login via OAuth device authorization grant + automated IDKit pages."""
+        LOG.info("Starting VW device authorization login flow")
+        login_flow = VWLoginFlow(
+            html_debug_dir=self._auth_debug_dump_dir,
+            use_fake_user_agent=self._use_fake_user_agent,
+            client_id=DEVICE_FLOW_CLIENT_ID,
+            client_scope=DEVICE_FLOW_CLIENT_SCOPE,
+            proxies=dict(self.proxies) if self.proxies else None,
+            timeout=self.timeout or 60,
+        )
+        token_payload = login_flow.login(
+            username=self.session_user.username,
+            password=self.session_user.password,
+            cookies_file=self._auth_cookies_file,
+        )
+        access_token = token_payload.get("access_token")
+        id_token = token_payload.get("id_token")
+        if not access_token or not id_token:
+            raise LoginError("Device-flow token response missing access_token or id_token")
+
+        # Identity tokens are accepted by the CARIAD vehicle BFF as Bearer tokens.
+        self.client_id = DEVICE_FLOW_CLIENT_ID
+        self._token_client_id = DEVICE_FLOW_CLIENT_ID
+        self.refresh_url = DEVICE_FLOW_TOKEN_URL
+        self.token = {
+            "access_token": access_token,
+            "id_token": id_token,
+            "refresh_token": token_payload.get("refresh_token"),
+            "token_type": token_payload.get("token_type") or "Bearer",
+            "expires_in": token_payload.get("expires_in"),
+        }
+        LOG.info("Device-flow login succeeded")
+
     def refresh(self) -> None:
-        # refresh tokens from refresh endpoint
+        # Prefer identity OIDC token endpoint for device-flow tokens; fall back to BFF.
+        if self._token_client_id == DEVICE_FLOW_CLIENT_ID:
+            try:
+                self.refresh_tokens(DEVICE_FLOW_TOKEN_URL)
+                return
+            except (AuthenticationError, RetrievalError) as refresh_error:
+                # Identity refresh often needs client_secret; re-run device flow instead.
+                LOG.warning(
+                    "Device-flow token refresh failed (%s); re-authenticating",
+                    refresh_error,
+                )
+                self.login_with_retry()
+                return
         self.refresh_tokens(
             'https://emea.bff.cariad.digital/login/v1/idk/token',
         )
@@ -294,7 +366,7 @@ class WeConnectSession(VWWebSession):
         body = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "client_id": self.client_id,
+            "client_id": getattr(self, "_token_client_id", None) or self.client_id,
         }
 
         # Use a shorter timeout for token refresh to prevent stale connection issues
